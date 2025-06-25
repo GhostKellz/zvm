@@ -1,23 +1,26 @@
-//! By convention, root.zig is the root source file when making a library.
+//! ZVM - The Zig Virtual Machine
+//! A lightweight, modular, and secure virtual machine engine for smart contracts
 const std = @import("std");
 
+// Re-export core modules
+pub const zvm = @import("zvm.zig");
+pub const zevm = @import("zevm.zig");
+pub const contract = @import("contract.zig");
+pub const runtime = @import("runtime.zig");
+
+// Legacy function for compatibility
 pub fn advancedPrint() !void {
-    // Stdout is for the actual output of your application, for example if you
-    // are implementing gzip, then only the compressed bytes should be sent to
-    // stdout, not any debugging messages.
     const stdout_file = std.io.getStdOut().writer();
     var bw = std.io.bufferedWriter(stdout_file);
     const stdout = bw.writer();
 
+    try stdout.print("ZVM - The Zig Virtual Machine v0.1.0\n", .{});
     try stdout.print("Run `zig build test` to run the tests.\n", .{});
 
-    try bw.flush(); // Don't forget to flush!
+    try bw.flush();
 }
 
-pub fn add(a: i32, b: i32) i32 {
-    return a + b;
-}
-
-test "basic add functionality" {
-    try std.testing.expect(add(3, 7) == 10);
+test "zvm module import" {
+    const vm = zvm.VM.init();
+    try std.testing.expect(vm.gas.limit == 0);
 }

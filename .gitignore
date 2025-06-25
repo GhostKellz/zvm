@@ -2,3 +2,14 @@
 /zig-out/
 *.o
 *.exe
+
+# Reference documentation (cleaned up - don't re-add)
+*_README.md
+*_CHANGELOG.md
+GHOSTBRIDGEv*.md
+LATEST_*.md
+OTHER_*.md
+WRAITH_*.md
+ZWALLET_*.md
+CRYPTO.md
+DOCS.md
