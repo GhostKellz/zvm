@@ -20,7 +20,7 @@ pub const EvmOpcode = enum(u8) {
     MULMOD = 0x09,
     EXP = 0x0a,
     SIGNEXTEND = 0x0b,
-    
+
     // Comparison & Bitwise Logic Operations
     LT = 0x10,
     GT = 0x11,
@@ -36,10 +36,10 @@ pub const EvmOpcode = enum(u8) {
     SHL = 0x1b,
     SHR = 0x1c,
     SAR = 0x1d,
-    
+
     // Keccak256
     KECCAK256 = 0x20,
-    
+
     // Environmental Information
     ADDRESS = 0x30,
     BALANCE = 0x31,
@@ -57,7 +57,7 @@ pub const EvmOpcode = enum(u8) {
     RETURNDATASIZE = 0x3d,
     RETURNDATACOPY = 0x3e,
     EXTCODEHASH = 0x3f,
-    
+
     // Block Information
     BLOCKHASH = 0x40,
     COINBASE = 0x41,
@@ -67,7 +67,7 @@ pub const EvmOpcode = enum(u8) {
     GASLIMIT = 0x45,
     CHAINID = 0x46,
     SELFBALANCE = 0x47,
-    
+
     // Stack, Memory, Storage and Flow Operations
     POP = 0x50,
     MLOAD = 0x51,
@@ -81,7 +81,7 @@ pub const EvmOpcode = enum(u8) {
     MSIZE = 0x59,
     GAS = 0x5a,
     JUMPDEST = 0x5b,
-    
+
     // Push Operations
     PUSH1 = 0x60,
     PUSH2 = 0x61,
@@ -115,7 +115,7 @@ pub const EvmOpcode = enum(u8) {
     PUSH30 = 0x7d,
     PUSH31 = 0x7e,
     PUSH32 = 0x7f,
-    
+
     // Duplication Operations
     DUP1 = 0x80,
     DUP2 = 0x81,
@@ -133,7 +133,7 @@ pub const EvmOpcode = enum(u8) {
     DUP14 = 0x8d,
     DUP15 = 0x8e,
     DUP16 = 0x8f,
-    
+
     // Exchange Operations
     SWAP1 = 0x90,
     SWAP2 = 0x91,
@@ -151,14 +151,14 @@ pub const EvmOpcode = enum(u8) {
     SWAP14 = 0x9d,
     SWAP15 = 0x9e,
     SWAP16 = 0x9f,
-    
+
     // Logging Operations
     LOG0 = 0xa0,
     LOG1 = 0xa1,
     LOG2 = 0xa2,
     LOG3 = 0xa3,
     LOG4 = 0xa4,
-    
+
     // System Operations
     CREATE = 0xf0,
     CALL = 0xf1,
@@ -170,7 +170,7 @@ pub const EvmOpcode = enum(u8) {
     REVERT = 0xfd,
     INVALID = 0xfe,
     SELFDESTRUCT = 0xff,
-    
+
     _,
 };
 
@@ -204,13 +204,13 @@ pub const EvmVM = struct {
     context: contract.ContractContext,
     return_data: []const u8,
     logs: std.ArrayList(EvmLog),
-    
+
     const EvmLog = struct {
         address: contract.Address,
         topics: []const [32]u8,
         data: []const u8,
     };
-    
+
     pub fn init(context: contract.ContractContext, allocator: std.mem.Allocator) EvmVM {
         return EvmVM{
             .vm = zvm.VM.init(),
@@ -219,19 +219,19 @@ pub const EvmVM = struct {
             .logs = std.ArrayList(EvmLog).init(allocator),
         };
     }
-    
+
     pub fn deinit(self: *EvmVM) void {
         self.logs.deinit();
     }
-    
+
     /// Execute EVM bytecode
     pub fn execute(self: *EvmVM, bytecode: []const u8) zvm.VMError!contract.ExecutionResult {
         self.vm.load_bytecode(bytecode, self.context.gas_limit);
-        
+
         while (self.vm.running) {
             try self.execute_evm_step();
         }
-        
+
         return contract.ExecutionResult{
             .success = true,
             .gas_used = self.vm.gas_used(),
@@ -239,21 +239,21 @@ pub const EvmVM = struct {
             .error_msg = null,
         };
     }
-    
+
     /// Execute one EVM instruction
     fn execute_evm_step(self: *EvmVM) zvm.VMError!void {
         const is_running = self.vm.running;
         const pc = self.vm.pc;
         const bytecode_len = self.vm.bytecode.len;
-        
+
         if (!is_running or pc >= bytecode_len) {
             self.vm.running = false;
             return;
         }
-        
+
         const opcode_byte = self.vm.bytecode[pc];
         const evm_opcode: EvmOpcode = @enumFromInt(opcode_byte);
-        
+
         switch (evm_opcode) {
             .STOP => {
                 self.vm.running = false;
@@ -346,21 +346,21 @@ pub const EvmVM = struct {
             .KECCAK256 => {
                 const offset = try self.vm.stack.pop();
                 const length = try self.vm.stack.pop();
-                
+
                 // Get data from memory (simplified)
                 _ = offset;
                 _ = length;
                 const data = &[_]u8{0x42}; // Placeholder
-                
+
                 const hash = runtime.Crypto.keccak256(data);
-                
+
                 // Convert hash to u256
                 var result: u256 = 0;
                 for (hash) |byte| {
                     result = (result << 8) | byte;
                 }
                 try self.vm.stack.push(result);
-                
+
                 const gas_cost = EvmGasCost.HIGH + (data.len + 31) / 32 * EvmGasCost.KECCAK256_WORD;
                 try self.vm.gas.consume(gas_cost);
             },
@@ -375,7 +375,7 @@ pub const EvmVM = struct {
             },
             .BALANCE => {
                 const addr_u256 = try self.vm.stack.pop();
-                
+
                 // Convert u256 to address (simplified)
                 _ = addr_u256;
                 const balance = runtime.Wallet.get_balance(self.context.address);
@@ -441,12 +441,12 @@ pub const EvmVM = struct {
             .JUMP => {
                 const dest = try self.vm.stack.pop();
                 if (dest >= self.vm.bytecode.len) return zvm.VMError.InvalidJump;
-                
+
                 // Check if destination is JUMPDEST
                 if (self.vm.bytecode[@intCast(dest)] != @intFromEnum(EvmOpcode.JUMPDEST)) {
                     return zvm.VMError.InvalidJump;
                 }
-                
+
                 self.vm.pc = @intCast(dest);
                 try self.vm.gas.consume(EvmGasCost.MID);
                 return; // Don't increment PC
@@ -454,15 +454,15 @@ pub const EvmVM = struct {
             .JUMPI => {
                 const dest = try self.vm.stack.pop();
                 const condition = try self.vm.stack.pop();
-                
+
                 if (condition != 0) {
                     if (dest >= self.vm.bytecode.len) return zvm.VMError.InvalidJump;
-                    
+
                     // Check if destination is JUMPDEST
                     if (self.vm.bytecode[@intCast(dest)] != @intFromEnum(EvmOpcode.JUMPDEST)) {
                         return zvm.VMError.InvalidJump;
                     }
-                    
+
                     self.vm.pc = @intCast(dest);
                     try self.vm.gas.consume(EvmGasCost.HIGH);
                     return; // Don't increment PC
@@ -481,35 +481,30 @@ pub const EvmVM = struct {
                 try self.vm.gas.consume(EvmGasCost.BASE);
             },
             // Push operations
-            .PUSH1, .PUSH2, .PUSH3, .PUSH4, .PUSH5, .PUSH6, .PUSH7, .PUSH8,
-            .PUSH9, .PUSH10, .PUSH11, .PUSH12, .PUSH13, .PUSH14, .PUSH15, .PUSH16,
-            .PUSH17, .PUSH18, .PUSH19, .PUSH20, .PUSH21, .PUSH22, .PUSH23, .PUSH24,
-            .PUSH25, .PUSH26, .PUSH27, .PUSH28, .PUSH29, .PUSH30, .PUSH31, .PUSH32 => {
+            .PUSH1, .PUSH2, .PUSH3, .PUSH4, .PUSH5, .PUSH6, .PUSH7, .PUSH8, .PUSH9, .PUSH10, .PUSH11, .PUSH12, .PUSH13, .PUSH14, .PUSH15, .PUSH16, .PUSH17, .PUSH18, .PUSH19, .PUSH20, .PUSH21, .PUSH22, .PUSH23, .PUSH24, .PUSH25, .PUSH26, .PUSH27, .PUSH28, .PUSH29, .PUSH30, .PUSH31, .PUSH32 => {
                 const push_size = @intFromEnum(evm_opcode) - @intFromEnum(EvmOpcode.PUSH1) + 1;
-                
+
                 if (self.vm.pc + push_size >= self.vm.bytecode.len) {
                     return zvm.VMError.InvalidOpcode;
                 }
-                
+
                 var value: u256 = 0;
                 for (1..push_size + 1) |i| {
                     value = (value << 8) | self.vm.bytecode[self.vm.pc + i];
                 }
-                
+
                 try self.vm.stack.push(value);
                 try self.vm.gas.consume(EvmGasCost.VERYLOW);
                 self.vm.pc += push_size;
             },
             // Dup operations
-            .DUP1, .DUP2, .DUP3, .DUP4, .DUP5, .DUP6, .DUP7, .DUP8,
-            .DUP9, .DUP10, .DUP11, .DUP12, .DUP13, .DUP14, .DUP15, .DUP16 => {
+            .DUP1, .DUP2, .DUP3, .DUP4, .DUP5, .DUP6, .DUP7, .DUP8, .DUP9, .DUP10, .DUP11, .DUP12, .DUP13, .DUP14, .DUP15, .DUP16 => {
                 const dup_depth = @intFromEnum(evm_opcode) - @intFromEnum(EvmOpcode.DUP1);
                 try self.vm.stack.dup(dup_depth);
                 try self.vm.gas.consume(EvmGasCost.VERYLOW);
             },
             // Swap operations
-            .SWAP1, .SWAP2, .SWAP3, .SWAP4, .SWAP5, .SWAP6, .SWAP7, .SWAP8,
-            .SWAP9, .SWAP10, .SWAP11, .SWAP12, .SWAP13, .SWAP14, .SWAP15, .SWAP16 => {
+            .SWAP1, .SWAP2, .SWAP3, .SWAP4, .SWAP5, .SWAP6, .SWAP7, .SWAP8, .SWAP9, .SWAP10, .SWAP11, .SWAP12, .SWAP13, .SWAP14, .SWAP15, .SWAP16 => {
                 const swap_depth = @intFromEnum(evm_opcode) - @intFromEnum(EvmOpcode.SWAP1) + 1;
                 try self.vm.stack.swap(swap_depth);
                 try self.vm.gas.consume(EvmGasCost.VERYLOW);
@@ -517,32 +512,32 @@ pub const EvmVM = struct {
             .RETURN => {
                 const offset = try self.vm.stack.pop();
                 const length = try self.vm.stack.pop();
-                
+
                 // Set return data (simplified)
                 _ = offset;
                 _ = length;
                 self.return_data = &[_]u8{0x42}; // Placeholder
-                
+
                 self.vm.running = false;
                 try self.vm.gas.consume(EvmGasCost.ZERO);
             },
             .REVERT => {
                 const offset = try self.vm.stack.pop();
                 const length = try self.vm.stack.pop();
-                
+
                 // Set return data (simplified)
                 _ = offset;
                 _ = length;
                 self.return_data = &[_]u8{0x42}; // Placeholder
-                
+
                 self.vm.running = false;
                 return zvm.VMError.ExecutionReverted;
             },
             else => {
                 return zvm.VMError.InvalidOpcode;
-            }
+            },
         }
-        
+
         self.vm.pc += 1;
     }
 };
@@ -552,7 +547,7 @@ pub const ZevmRuntime = struct {
     allocator: std.mem.Allocator,
     registry: contract.ContractRegistry,
     default_storage: contract.Storage,
-    
+
     pub fn init(allocator: std.mem.Allocator) ZevmRuntime {
         return ZevmRuntime{
             .allocator = allocator,
@@ -560,21 +555,14 @@ pub const ZevmRuntime = struct {
             .default_storage = contract.Storage.init(allocator),
         };
     }
-    
+
     pub fn deinit(self: *ZevmRuntime) void {
         self.registry.deinit();
         self.default_storage.deinit();
     }
-    
+
     /// Execute EVM bytecode
-    pub fn execute_evm(
-        self: *ZevmRuntime,
-        bytecode: []const u8,
-        caller: contract.Address,
-        value: u256,
-        input: []const u8,
-        gas_limit: u64
-    ) !contract.ExecutionResult {
+    pub fn execute_evm(self: *ZevmRuntime, bytecode: []const u8, caller: contract.Address, value: u256, input: []const u8, gas_limit: u64) !contract.ExecutionResult {
         const context = contract.ContractContext.init(
             contract.AddressUtils.zero(), // Contract address
             caller,
@@ -585,10 +573,10 @@ pub const ZevmRuntime = struct {
             @intCast(std.time.timestamp()),
             &self.default_storage,
         );
-        
+
         var evm = EvmVM.init(context, self.allocator);
         defer evm.deinit();
-        
+
         return evm.execute(bytecode);
     }
 };
@@ -597,45 +585,23 @@ pub const ZevmRuntime = struct {
 test "EVM opcode execution" {
     var zevm_runtime = ZevmRuntime.init(std.testing.allocator);
     defer zevm_runtime.deinit();
-    
+
     // Simple EVM bytecode: PUSH1 42, PUSH1 8, ADD, STOP
-    const bytecode = [_]u8{
-        @intFromEnum(EvmOpcode.PUSH1), 42,
-        @intFromEnum(EvmOpcode.PUSH1), 8,
-        @intFromEnum(EvmOpcode.ADD),
-        @intFromEnum(EvmOpcode.STOP)
-    };
-    
-    const result = try zevm_runtime.execute_evm(
-        &bytecode,
-        contract.AddressUtils.zero(),
-        0,
-        &[_]u8{},
-        100000
-    );
-    
+    const bytecode = [_]u8{ @intFromEnum(EvmOpcode.PUSH1), 42, @intFromEnum(EvmOpcode.PUSH1), 8, @intFromEnum(EvmOpcode.ADD), @intFromEnum(EvmOpcode.STOP) };
+
+    const result = try zevm_runtime.execute_evm(&bytecode, contract.AddressUtils.zero(), 0, &[_]u8{}, 100000);
+
     try std.testing.expect(result.success);
 }
 
 test "EVM gas consumption" {
     var zevm_runtime = ZevmRuntime.init(std.testing.allocator);
     defer zevm_runtime.deinit();
-    
-    const bytecode = [_]u8{
-        @intFromEnum(EvmOpcode.PUSH1), 1,
-        @intFromEnum(EvmOpcode.PUSH1), 2,
-        @intFromEnum(EvmOpcode.ADD),
-        @intFromEnum(EvmOpcode.STOP)
-    };
-    
-    const result = try zevm_runtime.execute_evm(
-        &bytecode,
-        contract.AddressUtils.zero(),
-        0,
-        &[_]u8{},
-        100000
-    );
-    
+
+    const bytecode = [_]u8{ @intFromEnum(EvmOpcode.PUSH1), 1, @intFromEnum(EvmOpcode.PUSH1), 2, @intFromEnum(EvmOpcode.ADD), @intFromEnum(EvmOpcode.STOP) };
+
+    const result = try zevm_runtime.execute_evm(&bytecode, contract.AddressUtils.zero(), 0, &[_]u8{}, 100000);
+
     try std.testing.expect(result.success);
     try std.testing.expect(result.gas_used > 0);
 }
