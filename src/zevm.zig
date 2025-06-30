@@ -237,6 +237,7 @@ pub const EvmVM = struct {
             .gas_used = self.vm.gas_used(),
             .return_data = self.return_data,
             .error_msg = null,
+            .contract_address = self.context.address,
         };
     }
 

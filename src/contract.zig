@@ -5,6 +5,9 @@ const zvm = @import("zvm.zig");
 /// Contract address type (20 bytes like Ethereum)
 pub const Address = [20]u8;
 
+/// Hash context for Address type in HashMap
+pub const AddressHashContext = std.hash_map.AutoContext(Address);
+
 /// Contract execution context
 pub const ContractContext = struct {
     /// Address of the contract being executed
@@ -114,6 +117,7 @@ pub const Contract = struct {
                     .gas_used = vm.gas_used(),
                     .return_data = &[_]u8{},
                     .error_msg = "Execution reverted",
+                    .contract_address = self.address,
                 };
             },
             else => return err,
@@ -124,6 +128,7 @@ pub const Contract = struct {
             .gas_used = vm.gas_used(),
             .return_data = &[_]u8{}, // TODO: Extract from VM state
             .error_msg = null,
+            .contract_address = self.address,
         };
     }
 };
@@ -134,6 +139,7 @@ pub const ExecutionResult = struct {
     gas_used: u64,
     return_data: []const u8,
     error_msg: ?[]const u8,
+    contract_address: ?Address,
 };
 
 /// Smart contract registry for deployed contracts
@@ -181,6 +187,7 @@ pub const ContractRegistry = struct {
                 .gas_used = 0,
                 .return_data = &[_]u8{},
                 .error_msg = "Contract not found",
+                .contract_address = null,
             };
         }
     }
