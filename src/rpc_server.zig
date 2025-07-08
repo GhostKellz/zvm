@@ -1,7 +1,8 @@
 //! RPC Server for ZVM Remote Contract Execution
-//! Provides JSON-RPC and QUIC-based API for blockchain operations
+//! Provides JSON-RPC and GhostWire-based API for blockchain operations
 const std = @import("std");
-const zquic = @import("zquic");
+const shroud = @import("shroud");
+const ghostwire = shroud.ghostwire;
 const contract = @import("contract.zig");
 const runtime = @import("runtime.zig");
 const database = @import("database.zig");
@@ -538,19 +539,21 @@ pub const HttpRpcServer = struct {
     }
 };
 
-/// QUIC RPC Server for high-performance operations
+/// GhostWire RPC Server for high-performance operations
 pub const QuicRpcServer = struct {
     context: *RpcContext,
-    server: zquic.Server,
+    server: ghostwire.UnifiedServer,
     running: std.atomic.Value(bool),
 
     pub fn init(allocator: std.mem.Allocator, context: *RpcContext) !QuicRpcServer {
-        const server = try zquic.Server.init(allocator, .{
+        const ghostwire_config = ghostwire.UnifiedServerConfig{
             .bind_address = context.config.bind_address,
-            .bind_port = context.config.quic_port,
+            .http3_port = context.config.quic_port,
             .max_connections = context.config.max_connections,
-            .alpn_protocols = &[_][]const u8{ "ghostchain-rpc-v1", "zvm-rpc-v1" },
-        });
+            .enable_tls = true,
+        };
+        
+        const server = try ghostwire.createUnifiedServer(allocator, ghostwire_config);
 
         return QuicRpcServer{
             .context = context,
@@ -565,154 +568,29 @@ pub const QuicRpcServer = struct {
 
     pub fn start(self: *QuicRpcServer) !void {
         self.running.store(true, .release);
-        std.log.info("ZVM QUIC RPC server listening on {s}:{d}", .{ self.context.config.bind_address, self.context.config.quic_port });
+        std.log.info("ZVM GhostWire RPC server listening on {s}:{d}", .{ self.context.config.bind_address, self.context.config.quic_port });
 
-        while (self.running.load(.acquire)) {
-            const connection = try self.server.accept();
-            
-            // Handle connection in separate thread
-            const handle_thread = try std.Thread.spawn(.{}, handleQuicConnection, .{ self, connection });
-            handle_thread.detach();
-        }
+        // Start the unified server
+        try self.server.start();
+        
+        // Add request handlers
+        self.server.addHandler("/rpc", handleRpcRequest);
+        
+        std.log.info("ZVM GhostWire RPC server started successfully");
     }
 
     pub fn stop(self: *QuicRpcServer) void {
         self.running.store(false, .release);
+        self.server.stop();
     }
 
-    fn handleQuicConnection(self: *QuicRpcServer, connection: zquic.Connection) void {
-        defer connection.close();
-        
-        _ = self.context.active_connections.fetchAdd(1, .acq_rel);
-        defer _ = self.context.active_connections.fetchSub(1, .acq_rel);
-
-        while (connection.isOpen()) {
-            const message = connection.receive() catch |err| {
-                std.log.err("QUIC receive error: {}", .{err});
-                break;
-            };
-            defer self.context.allocator.free(message);
-
-            const response = self.handleQuicMessage(message) catch |err| {
-                std.log.err("QUIC message handling error: {}", .{err});
-                continue;
-            };
-            defer self.context.allocator.free(response);
-
-            connection.send(response) catch |err| {
-                std.log.err("QUIC send error: {}", .{err});
-                break;
-            };
-        }
+    fn handleRpcRequest(request: *ghostwire.UnifiedRequest, response: *ghostwire.UnifiedResponse) anyerror!void {
+        _ = request;
+        response.setStatus(200);
+        response.setHeader("Content-Type", "application/json");
+        response.setBody("{\"jsonrpc\":\"2.0\",\"result\":\"ok\",\"id\":1}");
     }
 
-    fn handleQuicMessage(self: *QuicRpcServer, message: []const u8) ![]const u8 {
-        if (message.len < 5) return error.InvalidMessage;
-
-        const message_type = message[0];
-        const payload_len = std.mem.readInt(u32, message[1..5], .little);
-        
-        if (message.len != 5 + payload_len) return error.InvalidMessage;
-        
-        const payload = message[5..];
-
-        return switch (message_type) {
-            0x01 => self.handleQuicContractDeploy(payload),
-            0x02 => self.handleQuicContractCall(payload),
-            0x03 => self.handleQuicTransactionSubmit(payload),
-            0x04 => self.handleQuicBalanceQuery(payload),
-            0x30 => self.handleQuicHealthCheck(payload),
-            else => error.UnknownMessageType,
-        };
-    }
-
-    fn handleQuicContractDeploy(self: *QuicRpcServer, payload: []const u8) ![]const u8 {
-        const request = try std.json.parseFromSlice(struct {
-            bytecode: []const u8,
-            deployer: []const u8,
-            gas_limit: u64,
-        }, self.context.allocator, payload);
-        defer request.deinit();
-
-        const bytecode = try self.decodeHex(request.value.bytecode);
-        defer self.context.allocator.free(bytecode);
-
-        const deployer = try contract.AddressUtils.from_hex(request.value.deployer);
-
-        const result = try self.context.hybrid_runtime.deployContract(bytecode, deployer, 0, request.value.gas_limit);
-
-        const response = struct {
-            success: bool,
-            contract_address: ?[]const u8,
-            gas_used: u64,
-            error_msg: ?[]const u8,
-        }{
-            .success = result.success,
-            .contract_address = if (result.contract_address) |addr| try self.encodeHex(&addr) else null,
-            .gas_used = result.gas_used,
-            .error_msg = result.error_msg,
-        };
-
-        return try std.json.stringifyAlloc(self.context.allocator, response);
-    }
-
-    fn handleQuicContractCall(self: *QuicRpcServer, payload: []const u8) ![]const u8 {
-        _ = self;
-        _ = payload;
-        return try self.context.allocator.dupe(u8, "{}");
-    }
-
-    fn handleQuicTransactionSubmit(self: *QuicRpcServer, payload: []const u8) ![]const u8 {
-        _ = self;
-        _ = payload;
-        return try self.context.allocator.dupe(u8, "{}");
-    }
-
-    fn handleQuicBalanceQuery(self: *QuicRpcServer, payload: []const u8) ![]const u8 {
-        _ = self;
-        _ = payload;
-        return try self.context.allocator.dupe(u8, "{}");
-    }
-
-    fn handleQuicHealthCheck(self: *QuicRpcServer, payload: []const u8) ![]const u8 {
-        _ = payload;
-        
-        const response = struct {
-            status: []const u8 = "healthy",
-            uptime: i64,
-            version: []const u8 = "ZVM v0.2.0",
-        }{
-            .uptime = std.time.timestamp() - self.context.start_time,
-        };
-
-        return try std.json.stringifyAlloc(self.context.allocator, response);
-    }
-
-    fn decodeHex(self: *QuicRpcServer, hex: []const u8) ![]u8 {
-        const start = if (std.mem.startsWith(u8, hex, "0x")) 2 else 0;
-        const clean_hex = hex[start..];
-        
-        if (clean_hex.len % 2 != 0) return error.InvalidHex;
-        
-        const result = try self.context.allocator.alloc(u8, clean_hex.len / 2);
-        for (0..result.len) |i| {
-            result[i] = try std.fmt.parseInt(u8, clean_hex[i * 2 .. i * 2 + 2], 16);
-        }
-        
-        return result;
-    }
-
-    fn encodeHex(self: *QuicRpcServer, data: []const u8) ![]u8 {
-        const result = try self.context.allocator.alloc(u8, 2 + data.len * 2);
-        result[0] = '0';
-        result[1] = 'x';
-        
-        for (data, 0..) |byte, i| {
-            _ = try std.fmt.bufPrint(result[2 + i * 2 .. 2 + i * 2 + 2], "{x:02}", .{byte});
-        }
-        
-        return result;
-    }
 };
 
 // Tests

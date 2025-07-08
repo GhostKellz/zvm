@@ -32,13 +32,9 @@
     // Once all dependencies are fetched, `zig build` no longer requires
     // internet connectivity.
     .dependencies = .{
-        .zcrypto = .{
-            .url = "https://github.com/ghostkellz/zcrypto/archive/refs/heads/main.tar.gz",
-            .hash = "zcrypto-0.5.0-rgQAIw0vBwBwYxfz-NNHyJbWzJqnacg9PDrEOcBiwf7D",
-        },
-        .zquic = .{
-            .url = "https://github.com/ghostkellz/zquic/archive/refs/heads/main.tar.gz",
-            .hash = "zquic-0.3.0-2rPds13HkxPqjeJMiwXVesuWsJyQFrQ7hnHCJaKNiCco",
+        .shroud = .{
+            .url = "https://github.com/ghostkellz/shroud/archive/main.tar.gz",
+            .hash = "shroud-0.4.0-z7C8mQqQHABws8EKK9gkBc8b73eXiWhbziy3Hdlb-8VA",
         },
         // See `zig fetch --save <url>` for a command-line interface for adding dependencies.
         //.example = .{

@@ -1,7 +1,8 @@
 //! QUIC Client for ZVM Integration with ghostd and walletd
-//! Provides real ZQUIC transport for blockchain operations
+//! Provides Shroud GhostWire transport for blockchain operations
 const std = @import("std");
-const zquic = @import("zquic");
+const shroud = @import("shroud");
+const ghostwire = shroud.ghostwire;
 const contract = @import("contract.zig");
 
 /// QUIC Message Types for GhostChain Protocol
@@ -79,22 +80,25 @@ pub const ContractCallRequest = struct {
 /// QUIC Client for ZVM Integration
 pub const QuicClient = struct {
     allocator: std.mem.Allocator,
-    zquic_client: zquic.Client,
+    http_client: ghostwire.HttpClient,
     ghostd_endpoint: []const u8,
     walletd_endpoint: []const u8,
     connected: bool,
 
     pub fn init(allocator: std.mem.Allocator, ghostd_endpoint: []const u8, walletd_endpoint: []const u8) !QuicClient {
-        const client = try zquic.Client.init(allocator, .{
-            .server_name = "ghostchain.local",
-            .alpn_protocols = &[_][]const u8{ "ghostchain-v1", "grpc" },
-            .max_idle_timeout = 30000,
-            .enable_0rtt = true,
-        });
+        const client_config = ghostwire.HttpClient.Config{
+            .timeout_ms = 30000,
+            .max_redirects = 10,
+            .user_agent = "ZVM-QuicClient/1.0",
+            .enable_compression = true,
+            .verify_tls = true,
+        };
+        
+        const client = try ghostwire.HttpClient.init(allocator, client_config);
 
         return QuicClient{
             .allocator = allocator,
-            .zquic_client = client,
+            .http_client = client,
             .ghostd_endpoint = ghostd_endpoint,
             .walletd_endpoint = walletd_endpoint,
             .connected = false,
@@ -102,13 +106,12 @@ pub const QuicClient = struct {
     }
 
     pub fn deinit(self: *QuicClient) void {
-        self.zquic_client.deinit();
+        self.http_client.deinit();
     }
 
     /// Connect to ghostd and walletd services
     pub fn connect(self: *QuicClient) !void {
-        try self.zquic_client.connect(self.ghostd_endpoint);
-        std.log.info("Connected to ghostd at {s}", .{self.ghostd_endpoint});
+        std.log.info("Connecting to ghostd at {s}", .{self.ghostd_endpoint});
 
         // Test connection with health check
         const health_result = self.healthCheck(.ghostd) catch |err| {
@@ -124,7 +127,7 @@ pub const QuicClient = struct {
         std.log.info("Successfully connected to GhostChain services");
     }
 
-    /// Send QUIC message with automatic retry
+    /// Send HTTP request with automatic retry
     fn sendMessage(self: *QuicClient, endpoint: []const u8, message_type: MessageType, payload: []const u8) !QuicResponse {
         if (!self.connected) {
             try self.connect();
@@ -140,18 +143,24 @@ pub const QuicClient = struct {
         const request_bytes = try std.json.stringifyAlloc(self.allocator, request);
         defer self.allocator.free(request_bytes);
 
-        // Create QUIC message: [message_type][payload_length][payload]
-        const message = try self.allocator.alloc(u8, 1 + 4 + request_bytes.len);
-        defer self.allocator.free(message);
+        // Send HTTP POST request to the endpoint
+        const url = try std.fmt.allocPrint(self.allocator, "http://{s}/api", .{endpoint});
+        defer self.allocator.free(url);
 
-        message[0] = @intFromEnum(message_type);
-        std.mem.writeInt(u32, message[1..5], @intCast(request_bytes.len), .little);
-        @memcpy(message[5..], request_bytes);
+        const http_response = try self.http_client.post(url, request_bytes, "application/json");
+        defer http_response.deinit(self.allocator);
 
-        const response_bytes = try self.zquic_client.send(endpoint, message);
-        defer self.allocator.free(response_bytes);
+        if (http_response.status != 200) {
+            return QuicResponse{
+                .success = false,
+                .request_id = request.request_id,
+                .payload = &[_]u8{},
+                .error_message = "HTTP request failed",
+                .timestamp = std.time.timestamp(),
+            };
+        }
 
-        return try std.json.parseFromSlice(QuicResponse, self.allocator, response_bytes);
+        return try std.json.parseFromSlice(QuicResponse, self.allocator, http_response.body);
     }
 
     /// Deploy contract to ghostd
@@ -359,22 +368,26 @@ pub const QuicClient = struct {
         const payload = try std.json.stringifyAlloc(self.allocator, stream_request);
         defer self.allocator.free(payload);
 
-        // Create persistent QUIC stream for events
-        const stream = try self.zquic_client.openStream(self.ghostd_endpoint);
+        // Create WebSocket connection for event streaming
+        const ws_url = try std.fmt.allocPrint(self.allocator, "ws://{s}/stream", .{self.ghostd_endpoint});
+        defer self.allocator.free(ws_url);
+        
+        const ws_config = ghostwire.websocket.WebSocketClientConfig{
+            .timeout_ms = 30000,
+            .ping_interval_ms = 30000,
+            .max_message_size = 1024 * 1024,
+            .enable_compression = true,
+        };
+        
+        var ws_client = try ghostwire.websocket.WebSocketClient.init(self.allocator, ws_url, ws_config);
+        try ws_client.connect();
         
         // Send stream request
-        const message = try self.allocator.alloc(u8, 1 + 4 + payload.len);
-        defer self.allocator.free(message);
-
-        message[0] = @intFromEnum(MessageType.CONTRACT_EVENT_STREAM);
-        std.mem.writeInt(u32, message[1..5], @intCast(payload.len), .little);
-        @memcpy(message[5..], payload);
-
-        try stream.write(message);
+        try ws_client.send(payload);
 
         return ContractEventStream{
             .allocator = self.allocator,
-            .stream = stream,
+            .ws_client = ws_client,
             .contract_address = contract_address,
         };
     }
@@ -383,7 +396,7 @@ pub const QuicClient = struct {
 /// Contract Event Stream for real-time events
 pub const ContractEventStream = struct {
     allocator: std.mem.Allocator,
-    stream: zquic.Stream,
+    ws_client: ghostwire.websocket.WebSocketClient,
     contract_address: contract.Address,
 
     pub const ContractEvent = struct {
@@ -396,17 +409,19 @@ pub const ContractEventStream = struct {
     };
 
     pub fn next(self: *ContractEventStream) !?ContractEvent {
-        const event_data = self.stream.read() catch |err| {
-            if (err == error.StreamClosed) return null;
+        var buffer: [4096]u8 = undefined;
+        const event_data_len = self.ws_client.receive(&buffer) catch |err| {
+            if (err == error.ConnectionClosed) return null;
             return err;
         };
-        defer self.allocator.free(event_data);
-
+        
+        const event_data = buffer[0..event_data_len];
         return try std.json.parseFromSlice(ContractEvent, self.allocator, event_data);
     }
 
     pub fn close(self: *ContractEventStream) void {
-        self.stream.close();
+        self.ws_client.disconnect();
+        self.ws_client.deinit();
     }
 };
 

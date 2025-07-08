@@ -23,11 +23,7 @@ pub fn build(b: *std.Build) void {
     // in this directory.
 
     // Get dependencies
-    const zcrypto = b.dependency("zcrypto", .{
-        .target = target,
-        .optimize = optimize,
-    });
-    const zquic = b.dependency("zquic", .{
+    const shroud = b.dependency("shroud", .{
         .target = target,
         .optimize = optimize,
     });
@@ -53,8 +49,7 @@ pub fn build(b: *std.Build) void {
     });
 
     // Add dependencies to the module
-    mod.addImport("zcrypto", zcrypto.module("zcrypto"));
-    mod.addImport("zquic", zquic.module("zquic"));
+    mod.addImport("shroud", shroud.module("shroud"));
 
     // Here we define an executable. An executable needs to have a root module
     // which needs to expose a `main` function. While we could add a main function
@@ -94,6 +89,7 @@ pub fn build(b: *std.Build) void {
                 // can be extremely useful in case of collisions (which can happen
                 // importing modules from different packages).
                 .{ .name = "zvm", .module = mod },
+                .{ .name = "shroud", .module = shroud.module("shroud") },
             },
         }),
     });

@@ -756,8 +756,13 @@ pub const WasmRuntime = struct {
         return module;
     }
 
-    /// Execute WASM function with gas metering
+    /// Execute WASM function with gas metering and contract context
     pub fn executeFunction(self: *WasmRuntime, module: *WasmModule, function_name: []const u8, args: []const WasmValue, gas_limit: u64) !contract.ExecutionResult {
+        return self.executeFunctionWithContext(module, function_name, args, gas_limit, null);
+    }
+
+    /// Execute WASM function with explicit contract context
+    pub fn executeFunctionWithContext(self: *WasmRuntime, module: *WasmModule, function_name: []const u8, args: []const WasmValue, gas_limit: u64, contract_ctx: ?*contract.ContractContext) !contract.ExecutionResult {
         const func_idx = module.exports.get(function_name) orelse return contract.ExecutionResult{
             .success = false,
             .gas_used = 0,
@@ -770,29 +775,75 @@ pub const WasmRuntime = struct {
         var ctx = WasmExecutionContext.init(self.allocator, module, &gas_meter);
         defer ctx.deinit();
 
+        // Set contract context if provided
+        if (contract_ctx) |contract_context| {
+            ctx.setContractContext(contract_context);
+        }
+
         const results = ctx.callFunction(func_idx, args) catch |err| {
+            const error_msg = switch (err) {
+                WasmError.OutOfGas => "Out of gas",
+                WasmError.InvalidFunction => "Invalid function",
+                WasmError.ExecutionFailed => "Execution failed",
+                WasmError.InvalidMemory => "Invalid memory access",
+                WasmError.StackOverflow => "Stack overflow",
+                WasmError.TypeMismatch => "Type mismatch",
+                else => "Unknown error",
+            };
+
             return contract.ExecutionResult{
                 .success = false,
                 .gas_used = gas_meter.used,
                 .return_data = &[_]u8{},
-                .error_msg = switch (err) {
-                    WasmError.OutOfGas => "Out of gas",
-                    WasmError.InvalidFunction => "Invalid function",
-                    WasmError.ExecutionFailed => "Execution failed",
-                    else => "Unknown error",
-                },
-                .contract_address = null,
+                .error_msg = error_msg,
+                .contract_address = if (contract_ctx) |c| c.address else null,
             };
         };
 
+        // Convert WASM results to return data
+        var return_data = std.ArrayList(u8).init(self.allocator);
+        defer return_data.deinit();
+
+        for (results) |result| {
+            switch (result) {
+                .i32 => |val| {
+                    var bytes: [4]u8 = undefined;
+                    std.mem.writeInt(i32, &bytes, val, .little);
+                    try return_data.appendSlice(&bytes);
+                },
+                .i64 => |val| {
+                    var bytes: [8]u8 = undefined;
+                    std.mem.writeInt(i64, &bytes, val, .little);
+                    try return_data.appendSlice(&bytes);
+                },
+                .f32 => |val| {
+                    var bytes: [4]u8 = undefined;
+                    std.mem.writeInt(u32, &bytes, @bitCast(val), .little);
+                    try return_data.appendSlice(&bytes);
+                },
+                .f64 => |val| {
+                    var bytes: [8]u8 = undefined;
+                    std.mem.writeInt(u64, &bytes, @bitCast(val), .little);
+                    try return_data.appendSlice(&bytes);
+                },
+                else => {
+                    // For other types, write as i32
+                    var bytes: [4]u8 = undefined;
+                    std.mem.writeInt(i32, &bytes, 0, .little);
+                    try return_data.appendSlice(&bytes);
+                },
+            }
+        }
+
         self.allocator.free(results);
+        self.gas_used = gas_meter.used;
 
         return contract.ExecutionResult{
             .success = true,
             .gas_used = gas_meter.used,
-            .return_data = &[_]u8{}, // TODO: Convert results to bytes
+            .return_data = try return_data.toOwnedSlice(),
             .error_msg = null,
-            .contract_address = null,
+            .contract_address = if (contract_ctx) |c| c.address else null,
         };
     }
 };
