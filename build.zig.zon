@@ -34,8 +34,12 @@
     .dependencies = .{
         .shroud = .{
             .url = "https://github.com/ghostkellz/shroud/archive/main.tar.gz",
-            .hash = "shroud-0.4.0-z7C8mQqQHABws8EKK9gkBc8b73eXiWhbziy3Hdlb-8VA",
+            .hash = "shroud-0.4.0-z7C8meSFOAVHhmfnRjKbbavwmd55NEfaOisYuoMKeYWL",
         },
+        // .zqlite = .{
+        //     .url = "https://github.com/ghostkellz/zqlite/archive/main.tar.gz",
+        //     .hash = "zqlite-0.7.0-0Cdu4jvfBwBXkuFggkf5fVvszwd-_0nVoIqCs2Wb--uB",
+        // },
         // See `zig fetch --save <url>` for a command-line interface for adding dependencies.
         //.example = .{
         //    // When updating this field to a new URL, be sure to delete the corresponding

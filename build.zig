@@ -27,6 +27,11 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
+    
+    // const zqlite = b.dependency("zqlite", .{
+    //     .target = target,
+    //     .optimize = optimize,
+    // });
 
     // This creates a module, which represents a collection of source files alongside
     // some compilation options, such as optimization mode and linked system libraries.
@@ -50,6 +55,7 @@ pub fn build(b: *std.Build) void {
 
     // Add dependencies to the module
     mod.addImport("shroud", shroud.module("shroud"));
+    // mod.addImport("zqlite", zqlite.module("zqlite"));
 
     // Here we define an executable. An executable needs to have a root module
     // which needs to expose a `main` function. While we could add a main function
@@ -90,6 +96,7 @@ pub fn build(b: *std.Build) void {
                 // importing modules from different packages).
                 .{ .name = "zvm", .module = mod },
                 .{ .name = "shroud", .module = shroud.module("shroud") },
+                // .{ .name = "zqlite", .module = zqlite.module("zqlite") },
             },
         }),
     });
