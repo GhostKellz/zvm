@@ -54,14 +54,13 @@ pub fn main() !void {
 }
 
 fn printUsage() !void {
-    const stdout = std.io.getStdOut().writer();
-    try stdout.print("ZVM - The Zig Virtual Machine v0.3.0 (Enhanced WASM Runtime)\n\n", .{});
-    try stdout.print("Usage:\n", .{});
-    try stdout.print("  zvm run <bytecode_file>     Run ZVM native bytecode\n", .{});
-    try stdout.print("  zvm evm <bytecode_file>     Run EVM-compatible bytecode\n", .{});
-    try stdout.print("  zvm wasm <wasm_file>        Run WebAssembly module\n", .{});
-    try stdout.print("  zvm hybrid <bytecode_file>  Auto-detect and run any format\n", .{});
-    try stdout.print("  zvm demo                    Run comprehensive runtime demo\n", .{});
+    std.debug.print("ZVM - The Zig Virtual Machine v0.3.0 (Enhanced WASM Runtime)\n\n", .{});
+    std.debug.print("Usage:\n", .{});
+    std.debug.print("  zvm run <bytecode_file>     Run ZVM native bytecode\n", .{});
+    std.debug.print("  zvm evm <bytecode_file>     Run EVM-compatible bytecode\n", .{});
+    std.debug.print("  zvm wasm <wasm_file>        Run WebAssembly module\n", .{});
+    std.debug.print("  zvm hybrid <bytecode_file>  Auto-detect and run any format\n", .{});
+    std.debug.print("  zvm demo                    Run comprehensive runtime demo\n", .{});
 }
 
 fn runBytecode(allocator: std.mem.Allocator, filepath: []const u8) !void {
@@ -393,7 +392,7 @@ fn runDemo(allocator: std.mem.Allocator) !void {
 
     if (hybrid_deploy_result.success) {
         std.debug.print("   Hybrid ZVM contract deployed!\n", .{});
-        std.debug.print("   Contract address: {x}\n", .{std.fmt.fmtSliceHexLower(&hybrid_deploy_result.contract_address.?)});
+        std.debug.print("   Contract address: {x}\n", .{hybrid_deploy_result.contract_address.?});
         std.debug.print("   Gas used: {}\n", .{hybrid_deploy_result.gas_used});
     }
 

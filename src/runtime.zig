@@ -12,15 +12,13 @@ pub const RuntimeError = error{
     InvalidDomain,
 };
 
-// Import Shroud framework for crypto operations
-const shroud = @import("shroud");
-const ghostcipher = shroud.ghostcipher;
+// Pure Zig crypto - no external dependencies
 
-/// Integration with Shroud GhostCipher crypto
+/// Pure Zig crypto implementation
 pub const Crypto = struct {
     /// Hash functions
     pub fn keccak256(data: []const u8) [32]u8 {
-        // Use standard library SHA3-256 (Keccak-256 equivalent) since Shroud has compatibility issues
+        // Use standard library SHA3-256 (Keccak-256 equivalent)
         var hasher = std.crypto.hash.sha3.Sha3_256.init(.{});
         hasher.update(data);
         var result: [32]u8 = undefined;
@@ -29,7 +27,7 @@ pub const Crypto = struct {
     }
 
     pub fn sha256(data: []const u8) [32]u8 {
-        // Use standard library SHA-256 to avoid Shroud compatibility issues
+        // Use standard library SHA-256
         var hasher = std.crypto.hash.sha2.Sha256.init(.{});
         hasher.update(data);
         var result: [32]u8 = undefined;
@@ -39,7 +37,7 @@ pub const Crypto = struct {
 
     /// Ed25519 signature verification
     pub fn ed25519_verify(message: []const u8, signature: [64]u8, public_key: [32]u8) bool {
-        // Use standard library Ed25519 to avoid Shroud compatibility issues
+        // Use standard library Ed25519
         const sig = std.crypto.sign.Ed25519.Signature.fromBytes(signature) catch return false;
         const pub_key = std.crypto.sign.Ed25519.PublicKey.fromBytes(public_key) catch return false;
         return pub_key.verify(message, sig, .{}) == .valid;

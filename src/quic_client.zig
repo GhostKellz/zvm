@@ -1,8 +1,6 @@
-//! QUIC Client for ZVM Integration with ghostd and walletd
-//! Provides Shroud GhostWire transport for blockchain operations
+//! HTTP Client for ZVM Integration with ghostd and walletd
+//! Provides std.http transport for blockchain operations
 const std = @import("std");
-const shroud = @import("shroud");
-const ghostwire = shroud.ghostwire;
 const contract = @import("contract.zig");
 
 /// QUIC Message Types for GhostChain Protocol
@@ -77,36 +75,30 @@ pub const ContractCallRequest = struct {
     value: u64,
 };
 
-/// QUIC Client for ZVM Integration
+/// HTTP Client for ZVM Integration
 pub const QuicClient = struct {
     allocator: std.mem.Allocator,
-    http_client: ghostwire.HttpClient,
+    http_client: std.http.Client,
     ghostd_endpoint: []const u8,
     walletd_endpoint: []const u8,
     connected: bool,
 
     pub fn init(allocator: std.mem.Allocator, ghostd_endpoint: []const u8, walletd_endpoint: []const u8) !QuicClient {
-        const client_config = ghostwire.HttpClient.Config{
-            .timeout_ms = 30000,
-            .max_redirects = 10,
-            .user_agent = "ZVM-QuicClient/1.0",
-            .enable_compression = true,
-            .verify_tls = true,
-        };
-        
-        const client = try ghostwire.HttpClient.init(allocator, client_config);
+        const client = std.http.Client{ .allocator = allocator };
 
         return QuicClient{
             .allocator = allocator,
             .http_client = client,
-            .ghostd_endpoint = ghostd_endpoint,
-            .walletd_endpoint = walletd_endpoint,
+            .ghostd_endpoint = try allocator.dupe(u8, ghostd_endpoint),
+            .walletd_endpoint = try allocator.dupe(u8, walletd_endpoint),
             .connected = false,
         };
     }
 
     pub fn deinit(self: *QuicClient) void {
         self.http_client.deinit();
+        self.allocator.free(self.ghostd_endpoint);
+        self.allocator.free(self.walletd_endpoint);
     }
 
     /// Connect to ghostd and walletd services

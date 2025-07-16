@@ -2,9 +2,6 @@
 //! A lightweight, modular, and secure virtual machine engine for smart contracts
 const std = @import("std");
 
-// Import Shroud framework
-pub const shroud = @import("shroud");
-
 // Re-export core modules
 pub const zvm = @import("zvm.zig");
 pub const zevm = @import("zevm.zig");

@@ -10,10 +10,7 @@ const Mutex = std.Thread.Mutex;
 const Condition = std.Thread.Condition;
 const AutoHashMap = std.AutoHashMap;
 
-// Import Shroud framework dependencies directly
-const shroud = @import("shroud");
-const ghostwire = shroud.ghostwire;
-const ghostcipher = shroud.ghostcipher;
+// Pure Zig networking - no external dependencies
 
 /// Network configuration for ZVM with connection pooling
 pub const NetworkConfig = struct {
@@ -731,7 +728,7 @@ pub const NetworkNode = struct {
     allocator: std.mem.Allocator,
     config: NetworkConfig,
     local_peer_id: [32]u8,
-    ghostwire_server: ?ghostwire.UnifiedServer,
+    std_server: ?std.http.Server,
     peers: std.HashMap([32]u8, PeerInfo, std.hash_map.AutoContext([32]u8), std.hash_map.default_max_load_percentage),
     message_handlers: std.HashMap(MessageType, MessageHandler, std.hash_map.AutoContext(MessageType), std.hash_map.default_max_load_percentage),
     running: bool,
@@ -749,7 +746,7 @@ pub const NetworkNode = struct {
             .allocator = allocator,
             .config = config,
             .local_peer_id = local_peer_id,
-            .ghostwire_server = null,
+            .std_server = null,
             .peers = std.HashMap([32]u8, PeerInfo, std.hash_map.AutoContext([32]u8), std.hash_map.default_max_load_percentage).init(allocator),
             .message_handlers = std.HashMap(MessageType, MessageHandler, std.hash_map.AutoContext(MessageType), std.hash_map.default_max_load_percentage).init(allocator),
             .running = false,
@@ -776,15 +773,8 @@ pub const NetworkNode = struct {
         std.debug.print("Local Peer ID: {x}\n", .{std.fmt.fmtSliceHexLower(&self.local_peer_id)});
         std.debug.print("Bind Address: {s}:{d}\n", .{ self.config.bind_address, self.config.bind_port });
 
-        // Initialize GhostWire unified server with QUIC support
-        const ghostwire_config = ghostwire.UnifiedServerConfig{
-            .http3_port = self.config.bind_port,
-            .max_connections = self.config.max_connections,
-            .enable_tls = self.config.enable_pq_crypto,
-            .bind_address = self.config.bind_address,
-        };
-
-        self.ghostwire_server = try ghostwire.createUnifiedServer(self.allocator, ghostwire_config);
+        // Initialize basic HTTP server (QUIC support removed)
+        self.std_server = std.http.Server.init(self.allocator, .{});
 
         self.running = true;
 
@@ -804,11 +794,10 @@ pub const NetworkNode = struct {
 
         self.running = false;
 
-        // Close GhostWire server
-        if (self.ghostwire_server) |*server| {
-            server.stop();
+        // Close HTTP server
+        if (self.std_server) |*server| {
             server.deinit();
-            self.ghostwire_server = null;
+            self.std_server = null;
         }
 
         std.debug.print("ZVM Network Node stopped\n", .{});
@@ -959,7 +948,7 @@ pub const NetworkNode = struct {
 pub const RPCServer = struct {
     allocator: std.mem.Allocator,
     network_node: *NetworkNode,
-    ghostwire_server: ?ghostwire.UnifiedServer,
+    http_server: ?std.http.Server,
     running: bool,
 
     /// Initialize RPC server
@@ -967,7 +956,7 @@ pub const RPCServer = struct {
         return RPCServer{
             .allocator = allocator,
             .network_node = network_node,
-            .ghostwire_server = null,
+            .http_server = null,
             .running = false,
         };
     }
@@ -978,17 +967,8 @@ pub const RPCServer = struct {
 
         std.debug.print("Starting ZVM RPC Server on {s}:{d}\n", .{ bind_address, bind_port });
 
-        // Initialize GhostWire unified server for RPC
-        const ghostwire_config = ghostwire.UnifiedServerConfig{
-            .http1_port = bind_port,
-            .http2_port = bind_port + 1,
-            .http3_port = bind_port + 2,
-            .max_connections = 100,
-            .enable_tls = true,
-            .bind_address = bind_address,
-        };
-
-        self.ghostwire_server = try ghostwire.createUnifiedServer(self.allocator, ghostwire_config);
+        // Initialize basic HTTP server for RPC
+        self.http_server = std.http.Server.init(self.allocator, .{});
 
         self.running = true;
         std.debug.print("ZVM RPC Server started successfully\n", .{});
@@ -1000,11 +980,10 @@ pub const RPCServer = struct {
 
         self.running = false;
 
-        // Close GhostWire server
-        if (self.ghostwire_server) |*server| {
-            server.stop();
+        // Close HTTP server
+        if (self.http_server) |*server| {
             server.deinit();
-            self.ghostwire_server = null;
+            self.http_server = null;
         }
 
         std.debug.print("ZVM RPC Server stopped\n", .{});

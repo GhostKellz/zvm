@@ -1,8 +1,6 @@
 //! Enhanced RPC Server for ZVM Remote Contract Execution with Request Batching and Response Compression
 //! Provides JSON-RPC and GhostWire-based API for blockchain operations
 const std = @import("std");
-const shroud = @import("shroud");
-const ghostwire = shroud.ghostwire;
 const contract = @import("contract.zig");
 const runtime = @import("runtime.zig");
 const database = @import("database.zig");
@@ -711,56 +709,32 @@ pub const HttpRpcServer = struct {
     }
 };
 
-/// GhostWire RPC Server for high-performance operations
+/// Simple RPC Server for basic operations (QUIC support removed)
 pub const QuicRpcServer = struct {
     context: *RpcContext,
-    server: ghostwire.UnifiedServer,
     running: std.atomic.Value(bool),
 
     pub fn init(allocator: std.mem.Allocator, context: *RpcContext) !QuicRpcServer {
-        const ghostwire_config = ghostwire.UnifiedServerConfig{
-            .bind_address = context.config.bind_address,
-            .http3_port = context.config.quic_port,
-            .max_connections = context.config.max_connections,
-            .enable_tls = true,
-        };
-
-        const server = try ghostwire.createUnifiedServer(allocator, ghostwire_config);
-
+        _ = allocator;
+        
         return QuicRpcServer{
             .context = context,
-            .server = server,
             .running = std.atomic.Value(bool).init(false),
         };
     }
 
     pub fn deinit(self: *QuicRpcServer) void {
-        self.server.deinit();
+        _ = self;
     }
 
     pub fn start(self: *QuicRpcServer) !void {
         self.running.store(true, .release);
-        std.log.info("ZVM GhostWire RPC server listening on {s}:{d}", .{ self.context.config.bind_address, self.context.config.quic_port });
-
-        // Start the unified server
-        try self.server.start();
-
-        // Add request handlers
-        self.server.addHandler("/rpc", handleRpcRequest);
-
-        std.log.info("ZVM GhostWire RPC server started successfully");
+        std.log.info("ZVM basic RPC server (QUIC functionality removed) on {s}:{d}", .{ self.context.config.bind_address, self.context.config.quic_port });
+        std.log.info("ZVM basic RPC server started successfully");
     }
 
     pub fn stop(self: *QuicRpcServer) void {
         self.running.store(false, .release);
-        self.server.stop();
-    }
-
-    fn handleRpcRequest(request: *ghostwire.UnifiedRequest, response: *ghostwire.UnifiedResponse) anyerror!void {
-        _ = request;
-        response.setStatus(200);
-        response.setHeader("Content-Type", "application/json");
-        response.setBody("{\"jsonrpc\":\"2.0\",\"result\":\"ok\",\"id\":1}");
     }
 };
 

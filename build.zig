@@ -22,12 +22,7 @@ pub fn build(b: *std.Build) void {
     // target and optimize options) will be listed when running `zig build --help`
     // in this directory.
 
-    // Get dependencies
-    const shroud = b.dependency("shroud", .{
-        .target = target,
-        .optimize = optimize,
-    });
-    
+    // Dependencies removed for pure ZVM
     // const zqlite = b.dependency("zqlite", .{
     //     .target = target,
     //     .optimize = optimize,
@@ -54,7 +49,7 @@ pub fn build(b: *std.Build) void {
     });
 
     // Add dependencies to the module
-    mod.addImport("shroud", shroud.module("shroud"));
+    // shroud import removed for pure ZVM
     // mod.addImport("zqlite", zqlite.module("zqlite"));
 
     // Here we define an executable. An executable needs to have a root module
@@ -95,7 +90,7 @@ pub fn build(b: *std.Build) void {
                 // can be extremely useful in case of collisions (which can happen
                 // importing modules from different packages).
                 .{ .name = "zvm", .module = mod },
-                .{ .name = "shroud", .module = shroud.module("shroud") },
+                // shroud import removed for pure ZVM
                 // .{ .name = "zqlite", .module = zqlite.module("zqlite") },
             },
         }),
