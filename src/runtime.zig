@@ -707,7 +707,7 @@ pub const EnhancedStorage = struct {
     }
 };
 
-/// Crypto context with Shroud GhostCipher integration
+/// Crypto context with direct zcrypto/zsig integration
 pub const CryptoContext = struct {
     /// Initialize crypto context
     pub fn init() CryptoContext {
@@ -720,23 +720,23 @@ pub const CryptoContext = struct {
         _ = message;
         _ = signature;
         _ = public_key;
-        // Post-quantum signatures will be available in future Shroud versions
-        return true; // Simplified for compatibility
+        // Post-quantum signatures via zcrypto (when available)
+        return true; // Placeholder - will be implemented with zcrypto post-quantum support
     }
 
-    /// Classical signature verification (Ed25519)
+    /// Classical signature verification (Ed25519) using zcrypto
     pub fn verifyEd25519(self: *CryptoContext, message: []const u8, signature: [64]u8, public_key: [32]u8) bool {
         _ = self;
         return Crypto.ed25519_verify(message, signature, public_key);
     }
 
-    /// Hybrid key exchange (X25519 + ML-KEM)
+    /// Hybrid key exchange (X25519 + ML-KEM) using zcrypto
     pub fn performHybridKeyExchange(self: *CryptoContext, classical_public: [32]u8, pq_ciphertext: []const u8) ![64]u8 {
         _ = self;
         _ = pq_ciphertext;
         
         // For now, just return the classical public key duplicated
-        // Real ML-KEM implementation would be available in future Shroud versions
+        // Real ML-KEM implementation will be available via zcrypto
         var hybrid_secret: [64]u8 = undefined;
         @memcpy(hybrid_secret[0..32], &classical_public);
         @memcpy(hybrid_secret[32..64], &classical_public);

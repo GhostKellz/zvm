@@ -431,11 +431,11 @@ fn runDemo(allocator: std.mem.Allocator) !void {
     std.debug.print("   • Enhanced storage with format tracking\n", .{});
     std.debug.print("   • Improved error handling and debugging\n", .{});
     std.debug.print("   • Production-ready hybrid architecture\n", .{});
-    std.debug.print("\n🌐 Shroud Framework Integration (v0.4.0):\n", .{});
-    std.debug.print("   • GhostWire: QUIC/HTTP/WebSocket networking\n", .{});
-    std.debug.print("   • GhostCipher: Post-quantum cryptography\n", .{});
-    std.debug.print("   • Unified dependency management\n", .{});
-    std.debug.print("   • Future-ready for post-quantum migration\n", .{});
+    std.debug.print("\n🌐 Direct Zig Ecosystem Integration:\n", .{});
+    std.debug.print("   • zquic: QUIC/HTTP3 networking\n", .{});
+    std.debug.print("   • zcrypto: Post-quantum cryptography\n", .{});
+    std.debug.print("   • zsig: Multi-sig and threshold signatures\n", .{});
+    std.debug.print("   • zsync: Async runtime and concurrency\n", .{});
     std.debug.print("\n🔗 GhostChain Ecosystem Integration:\n", .{});
     std.debug.print("   • ghostd: Rust blockchain node integration\n", .{});
     std.debug.print("   • walletd: Wallet service integration\n", .{});

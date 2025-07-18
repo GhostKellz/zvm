@@ -17,16 +17,54 @@ pub fn build(b: *std.Build) void {
     // between Debug, ReleaseSafe, ReleaseFast, and ReleaseSmall. Here we do not
     // set a preferred release mode, allowing the user to decide how to optimize.
     const optimize = b.standardOptimizeOption(.{});
-    // It's also possible to define more custom flags to toggle optional features
-    // of this build script using `b.option()`. All defined flags (including
-    // target and optimize options) will be listed when running `zig build --help`
-    // in this directory.
-
-    // Dependencies removed for pure ZVM
-    // const zqlite = b.dependency("zqlite", .{
-    //     .target = target,
-    //     .optimize = optimize,
-    // });
+    // Feature flags for optional dependencies
+    const enable_crypto = b.option(bool, "crypto", "Enable cryptographic operations (default: true)") orelse true;
+    const enable_networking = b.option(bool, "networking", "Enable networking features (default: true)") orelse true;
+    const enable_wallet = b.option(bool, "wallet", "Enable wallet integration (default: true)") orelse true;
+    const enable_enterprise = b.option(bool, "enterprise", "Enable enterprise features (shroud, zqlite) (default: false)") orelse false;
+    const enable_persistent = b.option(bool, "persistent", "Enable persistent storage (zqlite) (default: false)") orelse false;
+    
+    // Core dependencies (always enabled)
+    const zcrypto = if (enable_crypto) b.dependency("zcrypto", .{
+        .target = target,
+        .optimize = optimize,
+    }) else null;
+    
+    const zsig = if (enable_crypto) b.dependency("zsig", .{
+        .target = target,
+        .optimize = optimize,
+    }) else null;
+    
+    const zquic = if (enable_networking) b.dependency("zquic", .{
+        .target = target,
+        .optimize = optimize,
+    }) else null;
+    
+    const zsync = if (enable_networking) b.dependency("zsync", .{
+        .target = target,
+        .optimize = optimize,
+    }) else null;
+    
+    const zwallet = if (enable_wallet) b.dependency("zwallet", .{
+        .target = target,
+        .optimize = optimize,
+    }) else null;
+    
+    const zns = if (enable_wallet) b.dependency("zns", .{
+        .target = target,
+        .optimize = optimize,
+    }) else null;
+    
+    // Optional enterprise dependencies
+    const shroud = if (enable_enterprise) b.dependency("shroud", .{
+        .target = target,
+        .optimize = optimize,
+    }) else null;
+    
+    const zqlite = if (enable_persistent) b.dependency("zqlite", .{
+        .target = target,
+        .optimize = optimize,
+    }) else null;
 
     // This creates a module, which represents a collection of source files alongside
     // some compilation options, such as optimization mode and linked system libraries.
@@ -48,9 +86,15 @@ pub fn build(b: *std.Build) void {
         .target = target,
     });
 
-    // Add dependencies to the module
-    // shroud import removed for pure ZVM
-    // mod.addImport("zqlite", zqlite.module("zqlite"));
+    // Add dependencies to the module conditionally
+    if (zcrypto) |dep| mod.addImport("zcrypto", dep.module("zcrypto"));
+    if (zsig) |dep| mod.addImport("zsig", dep.module("zsig"));
+    if (zquic) |dep| mod.addImport("zquic", dep.module("zquic"));
+    if (zsync) |dep| mod.addImport("zsync", dep.module("zsync"));
+    if (zwallet) |dep| mod.addImport("zwallet", dep.module("zwallet"));
+    if (zns) |dep| mod.addImport("zns", dep.module("zns"));
+    if (shroud) |dep| mod.addImport("shroud", dep.module("shroud"));
+    if (zqlite) |dep| mod.addImport("zqlite", dep.module("zqlite"));
 
     // Here we define an executable. An executable needs to have a root module
     // which needs to expose a `main` function. While we could add a main function
@@ -83,15 +127,21 @@ pub fn build(b: *std.Build) void {
             .optimize = optimize,
             // List of modules available for import in source files part of the
             // root module.
-            .imports = &.{
-                // Here "zvm" is the name you will use in your source code to
-                // import this module (e.g. `@import("zvm")`). The name is
-                // repeated because you are allowed to rename your imports, which
-                // can be extremely useful in case of collisions (which can happen
-                // importing modules from different packages).
-                .{ .name = "zvm", .module = mod },
-                // shroud import removed for pure ZVM
-                // .{ .name = "zqlite", .module = zqlite.module("zqlite") },
+            .imports = blk: {
+                var imports = std.ArrayList(std.Build.Module.Import).init(b.allocator);
+                imports.append(.{ .name = "zvm", .module = mod }) catch @panic("OOM");
+                
+                // Add conditional imports
+                if (zcrypto) |dep| imports.append(.{ .name = "zcrypto", .module = dep.module("zcrypto") }) catch @panic("OOM");
+                if (zsig) |dep| imports.append(.{ .name = "zsig", .module = dep.module("zsig") }) catch @panic("OOM");
+                if (zquic) |dep| imports.append(.{ .name = "zquic", .module = dep.module("zquic") }) catch @panic("OOM");
+                if (zsync) |dep| imports.append(.{ .name = "zsync", .module = dep.module("zsync") }) catch @panic("OOM");
+                if (zwallet) |dep| imports.append(.{ .name = "zwallet", .module = dep.module("zwallet") }) catch @panic("OOM");
+                if (zns) |dep| imports.append(.{ .name = "zns", .module = dep.module("zns") }) catch @panic("OOM");
+                if (shroud) |dep| imports.append(.{ .name = "shroud", .module = dep.module("shroud") }) catch @panic("OOM");
+                if (zqlite) |dep| imports.append(.{ .name = "zqlite", .module = dep.module("zqlite") }) catch @panic("OOM");
+                
+                break :blk imports.toOwnedSlice() catch @panic("OOM");
             },
         }),
     });

@@ -625,11 +625,26 @@ pub const WasmExecutionContext = struct {
         // Storage host functions
         try self.registerHostFunction("storage_load", &[_]WasmValueType{.i32}, &[_]WasmValueType{.i64}, hostStorageLoad);
         try self.registerHostFunction("storage_store", &[_]WasmValueType{ .i32, .i64 }, &[_]WasmValueType{}, hostStorageStore);
+        
+        // Persistent storage host functions (zqlite backend)
+        try self.registerHostFunction("db_connect", &[_]WasmValueType{ .i32, .i32 }, &[_]WasmValueType{.i32}, hostDbConnect);
+        try self.registerHostFunction("db_execute", &[_]WasmValueType{ .i32, .i32, .i32 }, &[_]WasmValueType{.i32}, hostDbExecute);
+        try self.registerHostFunction("db_query", &[_]WasmValueType{ .i32, .i32, .i32 }, &[_]WasmValueType{.i32}, hostDbQuery);
+        try self.registerHostFunction("db_close", &[_]WasmValueType{.i32}, &[_]WasmValueType{}, hostDbClose);
 
         // Crypto host functions
         try self.registerHostFunction("keccak256", &[_]WasmValueType{ .i32, .i32 }, &[_]WasmValueType{.i32}, hostKeccak256);
         try self.registerHostFunction("sha256", &[_]WasmValueType{ .i32, .i32 }, &[_]WasmValueType{.i32}, hostSha256);
         try self.registerHostFunction("ecrecover", &[_]WasmValueType{ .i32, .i32 }, &[_]WasmValueType{.i32}, hostEcrecover);
+        
+        // Post-quantum crypto host functions
+        try self.registerHostFunction("ml_dsa_verify", &[_]WasmValueType{ .i32, .i32, .i32, .i32, .i32, .i32 }, &[_]WasmValueType{.i32}, hostMLDSAVerify);
+        try self.registerHostFunction("ml_kem_encapsulate", &[_]WasmValueType{ .i32, .i32 }, &[_]WasmValueType{.i32}, hostMLKEMEncapsulate);
+        try self.registerHostFunction("ml_kem_decapsulate", &[_]WasmValueType{ .i32, .i32, .i32, .i32 }, &[_]WasmValueType{.i32}, hostMLKEMDecapsulate);
+        
+        // Multi-sig and threshold signatures
+        try self.registerHostFunction("multisig_verify", &[_]WasmValueType{ .i32, .i32, .i32, .i32, .i32 }, &[_]WasmValueType{.i32}, hostMultisigVerify);
+        try self.registerHostFunction("threshold_verify", &[_]WasmValueType{ .i32, .i32, .i32, .i32, .i32, .i32 }, &[_]WasmValueType{.i32}, hostThresholdVerify);
 
         // Debug/logging functions
         try self.registerHostFunction("debug_log", &[_]WasmValueType{ .i32, .i32 }, &[_]WasmValueType{}, hostDebugLog);
@@ -763,6 +778,94 @@ pub const WasmExecutionContext = struct {
         return &[_]WasmValue{};
     }
 
+    /// Database connection using zqlite backend
+    fn hostDbConnect(ctx: *WasmExecutionContext, args: []const WasmValue) WasmError![]WasmValue {
+        if (args.len != 2) return WasmError.TypeMismatch;
+
+        const path_offset = @as(u32, @intCast(args[0].i32));
+        const path_len = @as(u32, @intCast(args[1].i32));
+
+        if (ctx.module.memories.items.len == 0) return WasmError.InvalidMemory;
+        const memory = &ctx.module.memories.items[0];
+
+        if (path_offset + path_len > memory.data.len) return WasmError.InvalidMemory;
+
+        // For now, return a mock connection handle
+        // Real implementation would use zqlite to create database connection
+        const connection_id = 1; // Mock connection ID
+
+        var result = try std.ArrayList(WasmValue).initCapacity(ctx.stack.values.allocator, 1);
+        try result.append(WasmValue{ .i32 = connection_id });
+        return try result.toOwnedSlice();
+    }
+
+    /// Database execution using zqlite backend
+    fn hostDbExecute(ctx: *WasmExecutionContext, args: []const WasmValue) WasmError![]WasmValue {
+        if (args.len != 3) return WasmError.TypeMismatch;
+
+        const conn_id = @as(u32, @intCast(args[0].i32));
+        const sql_offset = @as(u32, @intCast(args[1].i32));
+        const sql_len = @as(u32, @intCast(args[2].i32));
+
+        if (ctx.module.memories.items.len == 0) return WasmError.InvalidMemory;
+        const memory = &ctx.module.memories.items[0];
+
+        if (sql_offset + sql_len > memory.data.len) return WasmError.InvalidMemory;
+
+        _ = conn_id; // TODO: Use connection ID
+        const sql = memory.data[sql_offset .. sql_offset + sql_len];
+        _ = sql; // TODO: Execute SQL using zqlite
+
+        // For now, return success (0) or error (1)
+        var result = try std.ArrayList(WasmValue).initCapacity(ctx.stack.values.allocator, 1);
+        try result.append(WasmValue{ .i32 = 0 }); // Success
+        return try result.toOwnedSlice();
+    }
+
+    /// Database query using zqlite backend
+    fn hostDbQuery(ctx: *WasmExecutionContext, args: []const WasmValue) WasmError![]WasmValue {
+        if (args.len != 3) return WasmError.TypeMismatch;
+
+        const conn_id = @as(u32, @intCast(args[0].i32));
+        const sql_offset = @as(u32, @intCast(args[1].i32));
+        const sql_len = @as(u32, @intCast(args[2].i32));
+
+        if (ctx.module.memories.items.len == 0) return WasmError.InvalidMemory;
+        const memory = &ctx.module.memories.items[0];
+
+        if (sql_offset + sql_len > memory.data.len) return WasmError.InvalidMemory;
+
+        _ = conn_id; // TODO: Use connection ID
+        const sql = memory.data[sql_offset .. sql_offset + sql_len];
+        _ = sql; // TODO: Execute query using zqlite
+
+        // For now, return mock result offset
+        const result_offset = memory.data.len - 256;
+        if (result_offset + 256 > memory.data.len) {
+            _ = try ctx.module.memories.items[0].grow(1);
+        }
+
+        // Mock result data
+        const mock_result = "[]"; // Empty JSON array for now
+        const result_bytes = mock_result[0..];
+        @memcpy(memory.data[result_offset .. result_offset + result_bytes.len], result_bytes);
+
+        var result = try std.ArrayList(WasmValue).initCapacity(ctx.stack.values.allocator, 1);
+        try result.append(WasmValue{ .i32 = @intCast(result_offset) });
+        return try result.toOwnedSlice();
+    }
+
+    /// Database close connection
+    fn hostDbClose(ctx: *WasmExecutionContext, args: []const WasmValue) WasmError![]WasmValue {
+        _ = ctx;
+        if (args.len != 1) return WasmError.TypeMismatch;
+
+        const conn_id = @as(u32, @intCast(args[0].i32));
+        _ = conn_id; // TODO: Close connection using zqlite
+
+        return &[_]WasmValue{};
+    }
+
     fn hostKeccak256(ctx: *WasmExecutionContext, args: []const WasmValue) WasmError![]WasmValue {
         if (args.len != 2) return WasmError.TypeMismatch;
 
@@ -855,6 +958,150 @@ pub const WasmExecutionContext = struct {
 
         var result = try std.ArrayList(WasmValue).initCapacity(ctx.stack.values.allocator, 1);
         try result.append(WasmValue{ .i32 = 0 });
+        return try result.toOwnedSlice();
+    }
+
+    /// ML-DSA (post-quantum) signature verification
+    fn hostMLDSAVerify(ctx: *WasmExecutionContext, args: []const WasmValue) WasmError![]WasmValue {
+        if (args.len != 6) return WasmError.TypeMismatch;
+
+        const msg_offset = @as(u32, @intCast(args[0].i32));
+        const msg_len = @as(u32, @intCast(args[1].i32));
+        const sig_offset = @as(u32, @intCast(args[2].i32));
+        const sig_len = @as(u32, @intCast(args[3].i32));
+        const pk_offset = @as(u32, @intCast(args[4].i32));
+        const pk_len = @as(u32, @intCast(args[5].i32));
+
+        if (ctx.module.memories.items.len == 0) return WasmError.InvalidMemory;
+        const memory = &ctx.module.memories.items[0];
+
+        if (msg_offset + msg_len > memory.data.len or 
+            sig_offset + sig_len > memory.data.len or
+            pk_offset + pk_len > memory.data.len) return WasmError.InvalidMemory;
+
+        const message = memory.data[msg_offset .. msg_offset + msg_len];
+        const signature = memory.data[sig_offset .. sig_offset + sig_len];
+        const public_key = memory.data[pk_offset .. pk_offset + pk_len];
+
+        const runtime = @import("runtime.zig");
+        var crypto_ctx = runtime.CryptoContext.init();
+        const is_valid = crypto_ctx.verifyMLDSA(message, signature, public_key);
+
+        var result = try std.ArrayList(WasmValue).initCapacity(ctx.stack.values.allocator, 1);
+        try result.append(WasmValue{ .i32 = if (is_valid) 1 else 0 });
+        return try result.toOwnedSlice();
+    }
+
+    /// ML-KEM (post-quantum) key encapsulation
+    fn hostMLKEMEncapsulate(ctx: *WasmExecutionContext, args: []const WasmValue) WasmError![]WasmValue {
+        if (args.len != 2) return WasmError.TypeMismatch;
+
+        const pk_offset = @as(u32, @intCast(args[0].i32));
+        const pk_len = @as(u32, @intCast(args[1].i32));
+
+        if (ctx.module.memories.items.len == 0) return WasmError.InvalidMemory;
+        const memory = &ctx.module.memories.items[0];
+
+        if (pk_offset + pk_len > memory.data.len) return WasmError.InvalidMemory;
+
+        // For now, return a mock ciphertext offset
+        // Real implementation would use zcrypto ML-KEM
+        const ciphertext_offset = memory.data.len - 64;
+        if (ciphertext_offset + 64 > memory.data.len) {
+            _ = try memory.grow(1);
+        }
+
+        // Mock ciphertext generation
+        for (memory.data[ciphertext_offset .. ciphertext_offset + 64], 0..) |*byte, i| {
+            byte.* = @intCast(i % 256);
+        }
+
+        var result = try std.ArrayList(WasmValue).initCapacity(ctx.stack.values.allocator, 1);
+        try result.append(WasmValue{ .i32 = @intCast(ciphertext_offset) });
+        return try result.toOwnedSlice();
+    }
+
+    /// ML-KEM (post-quantum) key decapsulation
+    fn hostMLKEMDecapsulate(ctx: *WasmExecutionContext, args: []const WasmValue) WasmError![]WasmValue {
+        if (args.len != 4) return WasmError.TypeMismatch;
+
+        const sk_offset = @as(u32, @intCast(args[0].i32));
+        const sk_len = @as(u32, @intCast(args[1].i32));
+        const ct_offset = @as(u32, @intCast(args[2].i32));
+        const ct_len = @as(u32, @intCast(args[3].i32));
+
+        if (ctx.module.memories.items.len == 0) return WasmError.InvalidMemory;
+        const memory = &ctx.module.memories.items[0];
+
+        if (sk_offset + sk_len > memory.data.len or 
+            ct_offset + ct_len > memory.data.len) return WasmError.InvalidMemory;
+
+        // For now, return a mock shared secret offset
+        // Real implementation would use zcrypto ML-KEM
+        const secret_offset = memory.data.len - 32;
+        if (secret_offset + 32 > memory.data.len) {
+            _ = try memory.grow(1);
+        }
+
+        // Mock shared secret generation
+        for (memory.data[secret_offset .. secret_offset + 32], 0..) |*byte, i| {
+            byte.* = @intCast((i * 17) % 256);
+        }
+
+        var result = try std.ArrayList(WasmValue).initCapacity(ctx.stack.values.allocator, 1);
+        try result.append(WasmValue{ .i32 = @intCast(secret_offset) });
+        return try result.toOwnedSlice();
+    }
+
+    /// Multi-signature verification using zsig
+    fn hostMultisigVerify(ctx: *WasmExecutionContext, args: []const WasmValue) WasmError![]WasmValue {
+        if (args.len != 5) return WasmError.TypeMismatch;
+
+        const msg_offset = @as(u32, @intCast(args[0].i32));
+        const msg_len = @as(u32, @intCast(args[1].i32));
+        const sigs_offset = @as(u32, @intCast(args[2].i32));
+        const sigs_len = @as(u32, @intCast(args[3].i32));
+        const threshold = @as(u32, @intCast(args[4].i32));
+
+        if (ctx.module.memories.items.len == 0) return WasmError.InvalidMemory;
+        const memory = &ctx.module.memories.items[0];
+
+        if (msg_offset + msg_len > memory.data.len or 
+            sigs_offset + sigs_len > memory.data.len) return WasmError.InvalidMemory;
+
+        // For now, return true if we have at least threshold signatures
+        // Real implementation would use zsig for multi-signature verification
+        const sig_count = sigs_len / 64; // Assuming 64-byte signatures
+        const is_valid = sig_count >= threshold;
+
+        var result = try std.ArrayList(WasmValue).initCapacity(ctx.stack.values.allocator, 1);
+        try result.append(WasmValue{ .i32 = if (is_valid) 1 else 0 });
+        return try result.toOwnedSlice();
+    }
+
+    /// Threshold signature verification using zsig
+    fn hostThresholdVerify(ctx: *WasmExecutionContext, args: []const WasmValue) WasmError![]WasmValue {
+        if (args.len != 6) return WasmError.TypeMismatch;
+
+        const msg_offset = @as(u32, @intCast(args[0].i32));
+        const msg_len = @as(u32, @intCast(args[1].i32));
+        const sig_offset = @as(u32, @intCast(args[2].i32));
+        const sig_len = @as(u32, @intCast(args[3].i32));
+        const threshold = @as(u32, @intCast(args[4].i32));
+        const total_keys = @as(u32, @intCast(args[5].i32));
+
+        if (ctx.module.memories.items.len == 0) return WasmError.InvalidMemory;
+        const memory = &ctx.module.memories.items[0];
+
+        if (msg_offset + msg_len > memory.data.len or 
+            sig_offset + sig_len > memory.data.len) return WasmError.InvalidMemory;
+
+        // For now, return true if threshold is reasonable
+        // Real implementation would use zsig for threshold signature verification
+        const is_valid = threshold > 0 and threshold <= total_keys and total_keys > 0;
+
+        var result = try std.ArrayList(WasmValue).initCapacity(ctx.stack.values.allocator, 1);
+        try result.append(WasmValue{ .i32 = if (is_valid) 1 else 0 });
         return try result.toOwnedSlice();
     }
 

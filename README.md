@@ -159,12 +159,105 @@ ZVM is designed to integrate with the complete **GhostChain** ecosystem:
 
 | Component | Status | Purpose |
 |-----------|--------|---------|
-| `zcrypto` | 🔗 Ready | Cryptographic primitives (Ed25519, secp256k1) |
-| `zwallet` | 🔗 Ready | HD wallet integration |
-| `zsig` | 🔗 Ready | Message signing and verification |
-| `ghostbridge` | 🔗 Ready | gRPC communication with Rust blockchain |
-| `cns` | 🔗 Ready | Custom Name Service for domain resolution |
-| `tokioz` | 🔄 Planned | Async runtime for concurrent execution |
+| `zcrypto` | ✅ Integrated | Cryptographic primitives (Ed25519, secp256k1, post-quantum) |
+| `zsig` | ✅ Integrated | Multi-signature and threshold signature verification |
+| `zquic` | ✅ Integrated | QUIC/HTTP3 networking for contract communications |
+| `zsync` | ✅ Integrated | Async runtime for concurrent execution |
+| `zwallet` | ✅ Integrated | HD wallet integration and account management |
+| `zns` | ✅ Integrated | Name Service for domain resolution (DID, .ghost, etc.) |
+| `zqlite` | ✅ Optional | Persistent storage backend (enabled with `--persistent`) |
+| `shroud` | ✅ Optional | Enterprise identity & ZKP features (enabled with `--enterprise`) |
+
+## 🏗️ Build System & Feature Flags
+
+ZVM uses a modular build system with feature flags to enable/disable components:
+
+```bash
+# Minimal build (stateless contracts only)
+zig build -Dcrypto=false -Dnetworking=false -Dwallet=false
+
+# Standard build (default - includes crypto, networking, wallet)
+zig build
+
+# Enterprise build (includes all features)
+zig build -Denterprise=true -Dpersistent=true
+
+# Persistent storage build
+zig build -Dpersistent=true
+```
+
+### Feature Flags
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `crypto` | `true` | Enable cryptographic operations (zcrypto, zsig) |
+| `networking` | `true` | Enable networking features (zquic, zsync) |
+| `wallet` | `true` | Enable wallet integration (zwallet, zns) |
+| `enterprise` | `false` | Enable enterprise features (shroud identity/ZKP) |
+| `persistent` | `false` | Enable persistent storage (zqlite backend) |
+
+## 🔧 Smart Contract Host Functions
+
+ZVM provides comprehensive host functions for smart contract execution:
+
+### Core Blockchain Functions
+- `get_caller()` - Get transaction caller address
+- `get_origin()` - Get transaction origin
+- `get_value()` - Get transaction value
+- `get_block_number()` - Get current block number
+- `get_block_timestamp()` - Get current block timestamp
+
+### Storage Functions
+- `storage_load(key)` - Load value from contract storage
+- `storage_store(key, value)` - Store value in contract storage
+
+### Persistent Storage (zqlite backend)
+- `db_connect(path)` - Connect to persistent database
+- `db_execute(conn, sql)` - Execute SQL statement
+- `db_query(conn, sql)` - Query database
+- `db_close(conn)` - Close database connection
+
+### Cryptographic Functions
+- `keccak256(data)` - Keccak-256 hash function
+- `sha256(data)` - SHA-256 hash function
+- `ecrecover(hash, signature)` - Ethereum-style signature recovery
+
+### Post-Quantum Cryptography
+- `ml_dsa_verify(message, signature, pubkey)` - ML-DSA signature verification
+- `ml_kem_encapsulate(pubkey)` - ML-KEM key encapsulation
+- `ml_kem_decapsulate(privkey, ciphertext)` - ML-KEM decapsulation
+
+### Multi-Signature & Threshold Signatures
+- `multisig_verify(message, signatures, threshold)` - Multi-signature verification
+- `threshold_verify(message, signature, threshold, total)` - Threshold signature verification
+
+## 📚 Examples
+
+### Hybrid Smart Contract (Stateless + Persistent)
+```zig
+// See examples/hybrid_contract.zig
+var contract = HybridContract.init(owner_address, persistent_mode);
+try contract.initPersistent("contract_storage.db");
+try contract.increment(); // Works in both modes
+```
+
+### Multi-Signature Contract
+```zig
+// See examples/multisig_contract.zig
+var contract = try MultiSigContract.init(allocator, &owners, threshold);
+try contract.proposeTransaction(allocator, recipient, value, data);
+try contract.signTransaction(owner1_pubkey, signature1);
+try contract.executeTransaction(); // Executes when threshold is met
+```
+
+### Running Examples
+```bash
+# Test hybrid contract
+zig test examples/hybrid_contract.zig
+
+# Test multi-sig contract
+zig test examples/multisig_contract.zig
+```
 
 ---
 

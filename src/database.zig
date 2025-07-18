@@ -1,7 +1,7 @@
 //! Database-backed persistent storage for ZVM
 //! Provides ZQLite v0.7.0 integration for high-performance contract state persistence
 const std = @import("std");
-// const zqlite = @import("zqlite"); // Commented out due to dependency conflict with shroud
+// const zqlite = @import("zqlite"); // Will be enabled with --persistent flag
 const contract = @import("contract.zig");
 
 /// Mock ZQLite types for compilation (will be replaced with real ZQLite later)
