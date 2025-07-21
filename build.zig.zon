@@ -50,11 +50,11 @@
         },
         .zwallet = .{
             .url = "https://github.com/ghostkellz/zwallet/archive/main.tar.gz",
-            .hash = "zwallet-0.3.2-GHCc1EziAgDeBFn15UzrMbDRnPx21mCt_2URwIay40Un",
+            .hash = "zwallet-0.3.2-GHCc1DbiAgDJ8d4TNNSOOLv2UHsVUlSOH5BQTQjJ88yn",
         },
         .zns = .{
             .url = "https://github.com/ghostkellz/zns/archive/main.tar.gz",
-            .hash = "zns-0.4.0-XtkX86a4AgDdV8unTQb2dUCk9feSEy0MgQQs7HYwImaA",
+            .hash = "zns-0.4.0-XtkX85u4AgDfyd-TXLNv3Wd5FnnfQqu7qgIaCMiTc4ON",
         },
         .shroud = .{
             .url = "https://github.com/ghostkellz/shroud/archive/main.tar.gz",
