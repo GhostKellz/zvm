@@ -42,7 +42,7 @@
         },
         .zquic = .{
             .url = "https://github.com/ghostkellz/zquic/archive/main.tar.gz",
-            .hash = "zquic-0.8.0-2rPdszOKmRPN-p7Qtj0tRzlk7djfiOV_SUcJzjtmt4UO",
+            .hash = "zquic-0.8.2-2rPdszxenBMHPfgmfwgDnBiL6MBy55i7NktMbEizfLeB",
         },
         .zsync = .{
             .url = "https://github.com/ghostkellz/zsync/archive/main.tar.gz",
@@ -63,6 +63,10 @@
         .zqlite = .{
             .url = "https://github.com/ghostkellz/zqlite/archive/main.tar.gz",
             .hash = "zqlite-1.2.1-0Cdu4loCDAC76ydtuPGqRi57pBu2rPH3HB74rLBikIpv",
+        },
+        .zledger = .{
+            .url = "https://github.com/ghostkellz/zledger/archive/main.tar.gz",
+            .hash = "zledger-0.3.2-gtTGiFdjAgClumjsj0EmGpOjiR9rpCNm83sbK4rP1nVU",
         },
     },
     .paths = .{
