@@ -1,28 +1,30 @@
 //! Database-backed persistent storage for ZVM
 //! Provides ZQLite v0.7.0 integration for high-performance contract state persistence
 const std = @import("std");
-// const zqlite = @import("zqlite"); // Will be enabled with --persistent flag
 const contract = @import("contract.zig");
 
-/// Mock ZQLite types for compilation (will be replaced with real ZQLite later)
+// Use conditional compilation for zqlite - disabled for now to use mock
+// const zqlite = if (@hasDecl(@This(), "real_zqlite")) @import("zqlite") else MockZQLite;
+
+/// Mock ZQLite types for compilation when zqlite is not available
 const MockZQLite = struct {
     pub const Database = struct {
         allocator: std.mem.Allocator,
         path: []const u8,
         
-        pub fn open(allocator: std.mem.Allocator, path: []const u8) !*Database {
-            const db = try allocator.create(Database);
-            db.* = Database{ .allocator = allocator, .path = try allocator.dupe(u8, path) };
+        pub fn open(allocator: std.mem.Allocator, path: []const u8) !*MockZQLite.Database {
+            const db = try allocator.create(MockZQLite.Database);
+            db.* = MockZQLite.Database{ .allocator = allocator, .path = try allocator.dupe(u8, path) };
             return db;
         }
         
-        pub fn close(self: *Database) void {
+        pub fn close(self: *MockZQLite.Database) void {
             self.allocator.free(self.path);
             self.allocator.destroy(self);
         }
         
-        pub fn setMVCCConfig(self: *Database, config: anytype) !void { _ = self; _ = config; }
-        pub fn beginTransaction(self: *Database, isolation: anytype) !*MVCCTransaction { 
+        pub fn setMVCCConfig(self: *MockZQLite.Database, config: anytype) !void { _ = self; _ = config; }
+        pub fn beginTransaction(self: *MockZQLite.Database, isolation: anytype) !*MVCCTransaction { 
             _ = isolation;
             const tx = try self.allocator.create(MVCCTransaction);
             tx.* = MVCCTransaction{ .allocator = self.allocator };
@@ -90,6 +92,7 @@ const MockZQLite = struct {
     };
 };
 
+// Use mock for now - will be replaced with real zqlite when --persistent flag is enabled
 const zqlite = MockZQLite;
 
 /// Database backend types
@@ -304,7 +307,7 @@ const ZQLiteBackend = struct {
         var db = try zqlite.Database.open(allocator, config.path);
 
         // Initialize advanced indexing for blockchain data
-        var index_manager = try zqlite.IndexManager.init(allocator);
+        const index_manager = try zqlite.IndexManager.init(allocator);
 
         // Account address hash index for O(1) lookups
         try index_manager.createHashIndex("account_address_idx", &[_][]const u8{"address"});
@@ -322,7 +325,7 @@ const ZQLiteBackend = struct {
         try index_manager.createHashIndex("contract_metadata_idx", &[_][]const u8{"address"});
 
         // Async transaction pool for concurrent operations
-        var transaction_pool = try zqlite.AsyncTransactionPool.init(allocator, 1000);
+        const transaction_pool = try zqlite.AsyncTransactionPool.init(allocator, 1000);
 
         // Configure MVCC for blockchain workloads
         try db.setMVCCConfig(.{
@@ -377,11 +380,11 @@ const ZQLiteBackend = struct {
 
         // Verify bloom filter exists
         if (!self.index_manager.bloomFilterExists("tx_exists_filter")) {
-            std.log.warn("Bloom filter missing, recreating");
+            std.log.warn("Bloom filter missing, recreating", .{});
             try self.index_manager.createBloomFilter("tx_exists_filter", 10000000);
         }
 
-        std.log.info("ZQLite database schema verified");
+        std.log.info("ZQLite database schema verified", .{});
     }
 
     pub fn storeContractStorage(self: *ZQLiteBackend, entry: StorageEntry) !void {
@@ -408,7 +411,7 @@ const ZQLiteBackend = struct {
         // Update composite index for fast lookups
         try self.index_manager.updateCompositeIndex("contract_storage_idx", &key_bytes, value);
 
-        std.log.debug("ZQLite: Stored contract storage for {x}", .{std.fmt.fmtSliceHexLower(&entry.contract_address)});
+        std.log.debug("ZQLite: Stored contract storage for {any}", .{entry.contract_address});
     }
 
     pub fn loadContractStorage(self: *ZQLiteBackend, contract_address: contract.Address, storage_key: [32]u8) !?[32]u8 {
@@ -450,7 +453,7 @@ const ZQLiteBackend = struct {
         // Update hash index for fast lookups
         try self.index_manager.updateHashIndex("contract_metadata_idx", key, value);
 
-        std.log.debug("ZQLite: Stored contract {x}", .{std.fmt.fmtSliceHexLower(&entry.address)});
+        std.log.debug("ZQLite: Stored contract {any}", .{entry.address});
     }
 
     pub fn getContract(self: *ZQLiteBackend, address: contract.Address) !?ContractEntry {
@@ -488,7 +491,7 @@ const ZQLiteBackend = struct {
         try self.index_manager.updateHashIndex("tx_hash_idx", key, value);
         try self.index_manager.addToBloomFilter("tx_exists_filter", key);
 
-        std.log.debug("ZQLite: Stored transaction {x}", .{std.fmt.fmtSliceHexLower(&entry.hash)});
+        std.log.debug("ZQLite: Stored transaction {any}", .{entry.hash});
     }
 
     pub fn getTransaction(self: *ZQLiteBackend, hash: [32]u8) !?TransactionEntry {
@@ -571,9 +574,8 @@ const MemoryBackend = struct {
             return @truncate(hasher.final());
         }
 
-        pub fn eql(self: @This(), a: StorageKey, b: StorageKey, b_index: usize) bool {
+        pub fn eql(self: @This(), a: StorageKey, b: StorageKey) bool {
             _ = self;
-            _ = b_index;
             return std.mem.eql(u8, &a.contract_address, &b.contract_address) and
                 std.mem.eql(u8, &a.storage_key, &b.storage_key);
         }

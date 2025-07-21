@@ -14,6 +14,72 @@ pub const Address = [20]u8;
 /// Hash context for Address type in HashMap
 pub const AddressHashContext = std.hash_map.AutoContext(Address);
 
+/// Address utilities
+pub const AddressUtils = struct {
+    /// Create zero address
+    pub fn zero() Address {
+        return [_]u8{0} ** 20;
+    }
+    
+    /// Create random address (for testing)
+    pub fn random() Address {
+        var address: Address = undefined;
+        var rng = std.Random.DefaultPrng.init(@intCast(std.time.timestamp()));
+        rng.fill(&address);
+        return address;
+    }
+    
+    /// Create address from hex string
+    pub fn fromHex(hex_str: []const u8) !Address {
+        if (hex_str.len < 40) return error.InvalidLength;
+        
+        var address: Address = undefined;
+        const start: usize = if (std.mem.startsWith(u8, hex_str, "0x")) 2 else 0;
+        
+        for (0..20) |i| {
+            const hex_byte = hex_str[start + i * 2 .. start + i * 2 + 2];
+            address[i] = try std.fmt.parseInt(u8, hex_byte, 16);
+        }
+        
+        return address;
+    }
+    
+    /// Convert address to hex string
+    pub fn toHex(address: Address, allocator: std.mem.Allocator) ![]u8 {
+        var result = try allocator.alloc(u8, 42); // "0x" + 40 hex chars
+        result[0] = '0';
+        result[1] = 'x';
+        
+        for (address, 0..) |byte, i| {
+            _ = std.fmt.bufPrint(result[2 + i * 2 ..][0..2], "{x:0>2}", .{byte}) catch unreachable;
+        }
+        
+        return result;
+    }
+    
+    /// Alias for toHex (snake_case version)
+    pub fn to_hex(address: Address, allocator: std.mem.Allocator) ![]u8 {
+        return toHex(address, allocator);
+    }
+    
+    /// Alias for fromHex (snake_case version)
+    pub fn from_hex(hex_str: []const u8) !Address {
+        return fromHex(hex_str);
+    }
+};
+
+/// Contract execution result
+pub const ExecutionResult = struct {
+    success: bool,
+    gas_used: u64,
+    return_data: []const u8,
+    error_msg: ?[]const u8,
+    contract_address: Address,
+    cache_hit: bool = false,
+    gas_savings: u64 = 0,
+    execution_time_ns: u64 = 0,
+};
+
 /// Contract execution context
 pub const ContractContext = struct {
     /// Address of the contract being executed
@@ -58,29 +124,65 @@ pub const ContractContext = struct {
 
 /// Contract storage interface
 pub const Storage = struct {
-    /// Simple key-value storage for contracts
-    /// In a real implementation, this would be backed by a database
-    data: std.ArrayHashMap(u256, u256, std.array_hash_map.AutoContext(u256), false),
+    /// Storage backend - either in-memory or persistent
+    backend: StorageBackend,
+    /// Contract address for persistent storage
+    contract_address: ?Address = null,
+    
+    const StorageBackend = union(enum) {
+        memory: std.ArrayHashMap(u256, u256, std.array_hash_map.AutoContext(u256), false),
+        persistent: *@import("database.zig").PersistentStorage,
+    };
 
     pub fn init(allocator: std.mem.Allocator) Storage {
         return Storage{
-            .data = std.ArrayHashMap(u256, u256, std.array_hash_map.AutoContext(u256), false).init(allocator),
+            .backend = .{ .memory = std.ArrayHashMap(u256, u256, std.array_hash_map.AutoContext(u256), false).init(allocator) },
+        };
+    }
+    
+    pub fn initPersistent(_: std.mem.Allocator, persistent_storage: *@import("database.zig").PersistentStorage, contract_address: Address) Storage {
+        return Storage{
+            .backend = .{ .persistent = persistent_storage },
+            .contract_address = contract_address,
         };
     }
 
     pub fn deinit(self: *Storage) void {
-        self.data.deinit();
+        switch (self.backend) {
+            .memory => |*memory| memory.deinit(),
+            .persistent => {}, // Persistent storage is managed externally
+        }
     }
 
     pub fn load(self: *Storage, key: u256) u256 {
-        return self.data.get(key) orelse 0;
+        switch (self.backend) {
+            .memory => |*memory| return memory.get(key) orelse 0,
+            .persistent => |persistent| {
+                if (self.contract_address) |addr| {
+                    return persistent.load(addr, key) catch 0;
+                }
+                return 0;
+            },
+        }
     }
 
     pub fn store(self: *Storage, key: u256, value: u256) void {
-        self.data.put(key, value) catch {
-            // In a real implementation, we'd handle this error properly
-            std.debug.panic("Failed to store value", .{});
-        };
+        switch (self.backend) {
+            .memory => |*memory| {
+                memory.put(key, value) catch {
+                    std.debug.panic("Failed to store value", .{});
+                };
+            },
+            .persistent => |persistent| {
+                if (self.contract_address) |addr| {
+                    // For now, use zeros for block number and tx hash
+                    // In real implementation, these would come from execution context
+                    persistent.store(addr, key, value, 0, [_]u8{0} ** 32) catch {
+                        std.debug.panic("Failed to store value in persistent storage", .{});
+                    };
+                }
+            },
+        }
     }
 
     /// Enhanced storage interface for caching integration
@@ -169,22 +271,6 @@ pub const Contract = struct {
     }
 };
 
-/// Enhanced result of contract execution with caching metadata
-pub const ExecutionResult = struct {
-    success: bool,
-    gas_used: u64,
-    return_data: []const u8,
-    error_msg: ?[]const u8,
-    contract_address: ?Address,
-    /// Execution time in nanoseconds
-    execution_time_ns: u64 = 0,
-    /// Whether result was served from cache
-    cache_hit: bool = false,
-    /// Gas optimization savings
-    gas_savings: u64 = 0,
-    /// Contract call depth
-    call_depth: u32 = 0,
-};
 
 /// Contract execution cache entry
 pub const CachedExecution = struct {
@@ -319,7 +405,7 @@ pub const ContractRegistry = struct {
                         result.gas_savings = cached.gas_cost;
                         result.execution_time_ns = @intCast(std.time.nanoTimestamp() - start_time);
 
-                        std.log.debug("Contract execution cache hit for {x}", .{std.fmt.fmtSliceHexLower(&contract_address)});
+                        std.log.debug("Contract execution cache hit for {any}", .{contract_address});
                         return result;
                     }
                 }
@@ -346,7 +432,7 @@ pub const ContractRegistry = struct {
                 .gas_used = 0,
                 .return_data = &[_]u8{},
                 .error_msg = "Contract not found",
-                .contract_address = null,
+                .contract_address = AddressUtils.zero(),
                 .execution_time_ns = @intCast(std.time.nanoTimestamp() - start_time),
             };
         }
@@ -434,7 +520,7 @@ pub const ContractRegistry = struct {
         };
 
         try self.execution_cache.put(cache_key, cached_execution);
-        std.log.debug("Cached execution result for key {x}", .{cache_key});
+        std.log.debug("Cached execution result for key {any}", .{cache_key});
     }
 
     /// Evict oldest cache entries when cache is full
@@ -557,35 +643,6 @@ pub const ContractRegistry = struct {
     }
 };
 
-/// Utility functions for addresses
-pub const AddressUtils = struct {
-    pub fn zero() Address {
-        return [_]u8{0} ** 20;
-    }
-
-    pub fn from_hex(hex: []const u8) !Address {
-        if (hex.len != 40) return error.InvalidLength;
-        var addr: Address = undefined;
-        for (0..20) |i| {
-            addr[i] = try std.fmt.parseInt(u8, hex[i * 2 .. i * 2 + 2], 16);
-        }
-        return addr;
-    }
-
-    pub fn to_hex(addr: Address) [40]u8 {
-        var result: [40]u8 = undefined;
-        for (addr, 0..) |byte, i| {
-            _ = std.fmt.bufPrint(result[i * 2 .. i * 2 + 2], "{:02x}", .{byte}) catch unreachable;
-        }
-        return result;
-    }
-
-    pub fn random() Address {
-        var addr: Address = undefined;
-        std.crypto.random.bytes(&addr);
-        return addr;
-    }
-};
 
 // Tests
 test "Contract context creation" {
@@ -622,8 +679,9 @@ test "Address utilities" {
     try std.testing.expect(std.mem.eql(u8, &zero_addr, &[_]u8{0} ** 20));
 
     const random_addr = AddressUtils.random();
-    const hex = AddressUtils.to_hex(random_addr);
-    const parsed = try AddressUtils.from_hex(&hex);
+    const hex = try AddressUtils.to_hex(random_addr, std.testing.allocator);
+    defer std.testing.allocator.free(hex);
+    const parsed = try AddressUtils.from_hex(hex);
     try std.testing.expect(std.mem.eql(u8, &random_addr, &parsed));
 }
 

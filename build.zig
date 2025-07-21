@@ -152,6 +152,62 @@ pub fn build(b: *std.Build) void {
     // by passing `--prefix` or `-p`.
     b.installArtifact(exe);
 
+    // CLI demo executable
+    const cli_demo = b.addExecutable(.{
+        .name = "cli_demo",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("examples/cli_demo.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &[_]std.Build.Module.Import{
+                .{ .name = "zvm", .module = mod },
+            },
+        }),
+    });
+    b.installArtifact(cli_demo);
+
+    // Enhanced contract demo executable
+    const enhanced_demo = b.addExecutable(.{
+        .name = "enhanced_demo",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("examples/enhanced_contract_demo.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &[_]std.Build.Module.Import{
+                .{ .name = "zvm", .module = mod },
+            },
+        }),
+    });
+    b.installArtifact(enhanced_demo);
+
+    // Post-quantum demo executable
+    const pq_demo = b.addExecutable(.{
+        .name = "pq_demo",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("examples/post_quantum_demo.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &[_]std.Build.Module.Import{
+                .{ .name = "zvm", .module = mod },
+            },
+        }),
+    });
+    b.installArtifact(pq_demo);
+
+    // Networking demo executable
+    const network_demo = b.addExecutable(.{
+        .name = "network_demo",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("examples/networking_demo.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &[_]std.Build.Module.Import{
+                .{ .name = "zvm", .module = mod },
+            },
+        }),
+    });
+    b.installArtifact(network_demo);
+
     // This creates a top level step. Top level steps have a name and can be
     // invoked by name when running `zig build` (e.g. `zig build run`).
     // This will evaluate the `run` step rather than the default step.
@@ -167,6 +223,23 @@ pub fn build(b: *std.Build) void {
     // the user runs `zig build run`, so we create a dependency link.
     const run_cmd = b.addRunArtifact(exe);
     run_step.dependOn(&run_cmd.step);
+
+    // Demo run steps
+    const run_cli_step = b.step("run-cli", "Run CLI demo");
+    const run_cli_cmd = b.addRunArtifact(cli_demo);
+    run_cli_step.dependOn(&run_cli_cmd.step);
+
+    const run_enhanced_step = b.step("run-enhanced", "Run enhanced contract demo");
+    const run_enhanced_cmd = b.addRunArtifact(enhanced_demo);
+    run_enhanced_step.dependOn(&run_enhanced_cmd.step);
+
+    const run_pq_step = b.step("run-pq", "Run post-quantum demo");
+    const run_pq_cmd = b.addRunArtifact(pq_demo);
+    run_pq_step.dependOn(&run_pq_cmd.step);
+
+    const run_network_step = b.step("run-network", "Run networking demo");
+    const run_network_cmd = b.addRunArtifact(network_demo);
+    run_network_step.dependOn(&run_network_cmd.step);
 
     // By making the run step depend on the default step, it will be run from the
     // installation directory rather than directly from within the cache directory.

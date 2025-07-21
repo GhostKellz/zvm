@@ -70,6 +70,20 @@ pub const Opcode = enum(u8) {
     KECCAK256 = 0x80,
     ECRECOVER = 0x81,
     ED25519_VERIFY = 0x82,
+    SHA256 = 0x83,
+    BLAKE3 = 0x84,
+    
+    // Post-quantum crypto operations
+    ML_DSA_VERIFY = 0x90,
+    ML_KEM_ENCAPSULATE = 0x91,
+    ML_KEM_DECAPSULATE = 0x92,
+    SCHNORR_VERIFY = 0x93,
+    
+    // Multi-signature operations
+    MULTISIG_VERIFY = 0xA0,
+    THRESHOLD_VERIFY = 0xA1,
+    AGGREGATE_VERIFY = 0xA2,
+    RING_VERIFY = 0xA3,
 
     _,
 };
@@ -89,6 +103,32 @@ pub const GasCost = struct {
     pub const CREATE = 32000;
     pub const CALL = 700;
     pub const MEMORY = 3;
+    
+    // Crypto operation costs
+    pub const KECCAK256_BASE = 30;
+    pub const KECCAK256_WORD = 6;
+    pub const SHA256_BASE = 60;
+    pub const SHA256_WORD = 12;
+    pub const BLAKE3_BASE = 20;
+    pub const BLAKE3_WORD = 4;
+    pub const ECRECOVER = 3000;
+    pub const ED25519_VERIFY = 2000;
+    
+    // Post-quantum crypto costs (higher due to computational complexity)
+    pub const ML_DSA_VERIFY = 8000;
+    pub const ML_KEM_ENCAPSULATE = 5000;
+    pub const ML_KEM_DECAPSULATE = 5000;
+    pub const SCHNORR_VERIFY = 2500;
+    
+    // Multi-signature costs (scale with number of signatures)
+    pub const MULTISIG_VERIFY_BASE = 1000;
+    pub const MULTISIG_VERIFY_PER_SIG = 2000;
+    pub const THRESHOLD_VERIFY_BASE = 1500;
+    pub const THRESHOLD_VERIFY_PER_KEY = 500;
+    pub const AGGREGATE_VERIFY_BASE = 2000;
+    pub const AGGREGATE_VERIFY_PER_SIG = 1000;
+    pub const RING_VERIFY_BASE = 3000;
+    pub const RING_VERIFY_PER_KEY = 200;
 };
 
 /// VM execution stack (max 1024 items)

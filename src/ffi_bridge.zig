@@ -567,7 +567,7 @@ pub const FfiRuntime = struct {
         const caller_balance = self.ffi_bridge.getBalance(caller) catch 0;
 
         std.log.info("Executing contract {} at block {} with caller balance {}", .{ 
-            std.fmt.fmtSliceHexLower(&contract_address), 
+            contract_address, 
             block_info.number, 
             caller_balance 
         });
@@ -593,7 +593,7 @@ pub const MockFfiBridge = struct {
         _ = constructor_args;
 
         const mock_address = contract.AddressUtils.random();
-        std.log.info("Mock FFI: Deployed contract to {}", .{std.fmt.fmtSliceHexLower(&mock_address)});
+        std.log.info("Mock FFI: Deployed contract to {}", .{mock_address});
 
         return contract.ExecutionResult{
             .success = true,
@@ -609,7 +609,7 @@ pub const MockFfiBridge = struct {
         _ = value;
         _ = function_data;
 
-        std.log.info("Mock FFI: Called contract {}", .{std.fmt.fmtSliceHexLower(&contract_address)});
+        std.log.info("Mock FFI: Called contract {}", .{contract_address});
 
         const mock_result = try self.allocator.dupe(u8, "mock_return_data");
 

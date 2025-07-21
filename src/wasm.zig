@@ -942,7 +942,7 @@ pub const WasmExecutionContext = struct {
         @memcpy(&hash_array, message_hash);
         @memcpy(&sig_array, signature);
 
-        if (@import("runtime.zig").Crypto.ecrecover(hash_array, sig_array)) |recovered_addr| {
+        if (@import("runtime.zig").Crypto.ecrecover(hash_array, &sig_array)) |recovered_addr| {
             // Store address in memory and return offset
             const addr_offset = memory.data.len - 20;
             if (addr_offset + 20 > memory.data.len) {
@@ -984,8 +984,7 @@ pub const WasmExecutionContext = struct {
         const public_key = memory.data[pk_offset .. pk_offset + pk_len];
 
         const runtime = @import("runtime.zig");
-        var crypto_ctx = runtime.CryptoContext.init();
-        const is_valid = crypto_ctx.verifyMLDSA(message, signature, public_key);
+        const is_valid = runtime.Crypto.ml_dsa_verify(message, signature, public_key);
 
         var result = try std.ArrayList(WasmValue).initCapacity(ctx.stack.values.allocator, 1);
         try result.append(WasmValue{ .i32 = if (is_valid) 1 else 0 });
@@ -1401,7 +1400,7 @@ pub const WasmRuntime = struct {
             .gas_used = 0,
             .return_data = &[_]u8{},
             .error_msg = "Function not found",
-            .contract_address = null,
+            .contract_address = if (contract_ctx) |c| c.address else [_]u8{0} ** 20,
         };
 
         // Get function reference
@@ -1411,7 +1410,7 @@ pub const WasmRuntime = struct {
                 .gas_used = 0,
                 .return_data = &[_]u8{},
                 .error_msg = "Invalid function index",
-                .contract_address = if (contract_ctx) |c| c.address else null,
+                .contract_address = if (contract_ctx) |c| c.address else [_]u8{0} ** 20,
             };
         }
 
@@ -1462,7 +1461,7 @@ pub const WasmRuntime = struct {
                 .gas_used = gas_meter.used,
                 .return_data = &[_]u8{},
                 .error_msg = error_msg,
-                .contract_address = if (contract_ctx) |c| c.address else null,
+                .contract_address = if (contract_ctx) |c| c.address else [_]u8{0} ** 20,
             };
         };
 
@@ -1509,7 +1508,7 @@ pub const WasmRuntime = struct {
             .gas_used = gas_meter.used,
             .return_data = try return_data.toOwnedSlice(),
             .error_msg = null,
-            .contract_address = if (contract_ctx) |c| c.address else null,
+            .contract_address = if (contract_ctx) |c| c.address else [_]u8{0} ** 20,
         };
 
         // Cache successful execution result

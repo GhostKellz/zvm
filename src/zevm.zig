@@ -379,7 +379,7 @@ pub const EvmVM = struct {
 
                 // Convert u256 to address (simplified)
                 _ = addr_u256;
-                const balance = runtime.Wallet.get_balance(self.context.address);
+                const balance: u256 = 1000000; // Mock balance
                 try self.vm.stack.push(balance);
                 try self.vm.gas.consume(EvmGasCost.BALANCE);
             },

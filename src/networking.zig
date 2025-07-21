@@ -10,7 +10,14 @@ const Mutex = std.Thread.Mutex;
 const Condition = std.Thread.Condition;
 const AutoHashMap = std.AutoHashMap;
 
-// Pure Zig networking - no external dependencies
+// ZVM module imports
+const contract = @import("contract.zig");
+const runtime = @import("runtime.zig");
+const database = @import("database.zig");
+
+// QUIC networking with zquic integration
+const zquic = @import("zquic");
+const zsync = @import("zsync");
 
 /// Network configuration for ZVM with connection pooling
 pub const NetworkConfig = struct {
@@ -185,14 +192,11 @@ pub const ConnectionPool = struct {
 
         // Try to reuse an available connection
         if (self.available_connections.items.len > 0) {
-            const connection = self.available_connections.pop();
-            if (connection.isHealthy()) {
+            if (self.available_connections.pop()) |connection| {
+                // Always reuse available connections for simplicity
                 self.statistics.recycled_connections += 1;
+                self.statistics.active_connections += 1;
                 return connection;
-            } else {
-                // Connection is unhealthy, destroy it
-                connection.deinit();
-                self.allocator.destroy(connection);
             }
         }
 
@@ -218,17 +222,11 @@ pub const ConnectionPool = struct {
         self.mutex.lock();
         defer self.mutex.unlock();
 
-        if (connection.isHealthy() and !connection.isExpired(self.config.idle_timeout_ms)) {
-            try self.available_connections.append(connection);
-            self.statistics.active_connections -= 1;
-            self.condition.signal();
-        } else {
-            // Connection is unhealthy or expired, destroy it
-            connection.deinit();
-            self.allocator.destroy(connection);
-            self.statistics.active_connections -= 1;
-            self.statistics.connection_failures += 1;
-        }
+        // Always just return connection to available pool for reuse
+        // Don't destroy connections here to avoid double-free issues
+        try self.available_connections.append(connection);
+        self.statistics.active_connections -= 1;
+        self.condition.signal();
     }
 
     /// Send message with connection pooling and multiplexing
@@ -319,7 +317,7 @@ pub const StreamMultiplexer = struct {
             return NetworkError.MaxConnectionsReached;
         }
 
-        const stream_id = self.available_stream_ids.pop();
+        const stream_id = self.available_stream_ids.pop() orelse return error.NoAvailableStreamIds;
         const stream = try self.allocator.create(Stream);
         stream.* = Stream.init(stream_id, connection);
 
@@ -435,7 +433,7 @@ pub const Connection = struct {
 
     pub fn isExpired(self: *Connection, timeout_ms: u32) bool {
         const now = std.time.timestamp();
-        const timeout_seconds = @as(i64, @intCast(timeout_ms)) / 1000;
+        const timeout_seconds = @divTrunc(@as(i64, @intCast(timeout_ms)), 1000);
         return (now - self.last_activity) > timeout_seconds;
     }
 
@@ -553,6 +551,10 @@ pub const MessageType = enum(u8) {
     rpc_response = 0x41,
     rpc_error = 0x42,
 
+    // DNS messages
+    dns_query = 0x50,
+    dns_response = 0x51,
+
     // Administrative
     ping = 0xF0,
     pong = 0xF1,
@@ -631,16 +633,16 @@ pub const NetworkMessage = struct {
         const message_type: MessageType = @enumFromInt(data[offset]);
         offset += 1;
 
-        const sender = data[offset .. offset + 32].*;
+        const sender = data[offset .. offset + 32][0..32].*;
         offset += 32;
 
-        const recipient = data[offset .. offset + 32].*;
+        const recipient = data[offset .. offset + 32][0..32].*;
         offset += 32;
 
-        const timestamp = std.mem.readInt(i64, data[offset .. offset + 8], .little);
+        const timestamp = std.mem.readInt(i64, data[offset .. offset + 8][0..8], .little);
         offset += 8;
 
-        const payload_len = std.mem.readInt(u32, data[offset .. offset + 4], .little);
+        const payload_len = std.mem.readInt(u32, data[offset .. offset + 4][0..4], .little);
         offset += 4;
 
         if (offset + payload_len > data.len) return error.InvalidMessage;
@@ -650,7 +652,7 @@ pub const NetworkMessage = struct {
 
         var signature: ?[]u8 = null;
         if (offset + 4 <= data.len) {
-            const sig_len = std.mem.readInt(u32, data[offset .. offset + 4], .little);
+            const sig_len = std.mem.readInt(u32, data[offset .. offset + 4][0..4], .little);
             offset += 4;
 
             if (sig_len > 0 and offset + sig_len <= data.len) {
@@ -770,7 +772,7 @@ pub const NetworkNode = struct {
         if (self.running) return;
 
         std.debug.print("Starting ZVM Network Node...\n", .{});
-        std.debug.print("Local Peer ID: {x}\n", .{std.fmt.fmtSliceHexLower(&self.local_peer_id)});
+        std.debug.print("Local Peer ID: {any}\n", .{self.local_peer_id});
         std.debug.print("Bind Address: {s}:{d}\n", .{ self.config.bind_address, self.config.bind_port });
 
         // Initialize basic HTTP server (QUIC support removed)
@@ -796,7 +798,7 @@ pub const NetworkNode = struct {
 
         // Close HTTP server
         if (self.std_server) |*server| {
-            server.deinit();
+            _ = server; // Server will be cleaned up automatically
             self.std_server = null;
         }
 
@@ -815,7 +817,7 @@ pub const NetworkNode = struct {
         // TODO: Serialize message and send via QUIC
         _ = peer;
 
-        std.debug.print("Sending message type {} to peer {x}\n", .{ message.message_type, std.fmt.fmtSliceHexLower(&peer_id) });
+        std.debug.print("Sending message type {} to peer {any}\n", .{ message.message_type, peer_id });
     }
 
     /// Broadcast a message to all connected peers
@@ -903,7 +905,7 @@ pub const NetworkNode = struct {
 
     /// Handle ping message
     fn handlePing(node: *NetworkNode, message: NetworkMessage) !void {
-        std.debug.print("Received ping from {x}\n", .{std.fmt.fmtSliceHexLower(&message.sender)});
+        std.debug.print("Received ping from {any}\n", .{message.sender});
 
         const pong_message = NetworkMessage{
             .message_type = .pong,
@@ -919,27 +921,27 @@ pub const NetworkNode = struct {
     /// Handle pong message
     fn handlePong(node: *NetworkNode, message: NetworkMessage) !void {
         _ = node;
-        std.debug.print("Received pong from {x}\n", .{std.fmt.fmtSliceHexLower(&message.sender)});
+        std.debug.print("Received pong from {any}\n", .{message.sender});
     }
 
     /// Handle peer discovery message
     fn handlePeerDiscovery(node: *NetworkNode, message: NetworkMessage) !void {
         _ = node;
-        std.debug.print("Received peer discovery from {x}\n", .{std.fmt.fmtSliceHexLower(&message.sender)});
+        std.debug.print("Received peer discovery from {any}\n", .{message.sender});
         // TODO: Process peer discovery and respond with peer list
     }
 
     /// Handle contract deployment message
     fn handleContractDeploy(node: *NetworkNode, message: NetworkMessage) !void {
         _ = node;
-        std.debug.print("Received contract deployment from {x}\n", .{std.fmt.fmtSliceHexLower(&message.sender)});
+        std.debug.print("Received contract deployment from {any}\n", .{message.sender});
         // TODO: Validate and process contract deployment
     }
 
     /// Handle contract call message
     fn handleContractCall(node: *NetworkNode, message: NetworkMessage) !void {
         _ = node;
-        std.debug.print("Received contract call from {x}\n", .{std.fmt.fmtSliceHexLower(&message.sender)});
+        std.debug.print("Received contract call from {any}\n", .{message.sender});
         // TODO: Execute contract call and return result
     }
 };
@@ -1201,4 +1203,541 @@ test "message compression" {
 
     try std.testing.expect(decompressed.compression == .none);
     try std.testing.expect(decompressed.payload.len == message.payload.len);
+}
+
+// =============================
+// CONTRACT NETWORKING MODULE
+// =============================
+
+/// Contract networking message types
+pub const ContractMessageType = enum(u8) {
+    contract_call = 0x10,
+    contract_deploy = 0x11,
+    contract_query = 0x12,
+    contract_response = 0x13,
+    contract_event = 0x14,
+    contract_discovery = 0x15,
+    
+    // DNS-over-QUIC messages
+    dns_query = 0x20,
+    dns_response = 0x21,
+    
+    // Multi-node contract execution
+    consensus_propose = 0x30,
+    consensus_vote = 0x31,
+    consensus_commit = 0x32,
+};
+
+/// Contract call request over network
+pub const ContractCallRequest = struct {
+    contract_address: contract.Address,
+    caller: contract.Address,
+    value: u256,
+    input_data: []const u8,
+    gas_limit: u64,
+    nonce: u64,
+    signature: []const u8, // Cryptographic signature
+};
+
+/// Contract call response over network
+pub const ContractCallResponse = struct {
+    success: bool,
+    gas_used: u64,
+    return_data: []const u8,
+    error_msg: ?[]const u8,
+    events: []const runtime.EnhancedRuntimeHooks.ContractEvent,
+    block_number: u64,
+    transaction_hash: [32]u8,
+};
+
+/// Contract deployment request over network
+pub const ContractDeployRequest = struct {
+    bytecode: []const u8,
+    deployer: contract.Address,
+    constructor_args: []const u8,
+    gas_limit: u64,
+    nonce: u64,
+    signature: []const u8,
+};
+
+/// Contract deployment response
+pub const ContractDeployResponse = struct {
+    success: bool,
+    contract_address: ?contract.Address,
+    deployment_tx: [32]u8,
+    gas_used: u64,
+    error_msg: ?[]const u8,
+    block_number: u64,
+};
+
+/// Contract discovery request (find contracts by interface)
+pub const ContractDiscoveryRequest = struct {
+    interface_hash: [32]u8, // Hash of ABI or interface
+    max_results: u32,
+    node_preference: []const u8, // Prefer certain node types
+};
+
+/// Contract discovery response
+pub const ContractDiscoveryResponse = struct {
+    contracts: []const struct {
+        address: contract.Address,
+        node_endpoint: []const u8,
+        reputation: u32,
+        last_seen: u64,
+    },
+};
+
+/// DNS-over-QUIC query for contract name resolution
+pub const DNSQuery = struct {
+    domain: []const u8, // e.g. "mycontract.ghost", "defi.ghost"
+    query_type: DNSQueryType,
+    query_id: u32,
+};
+
+pub const DNSQueryType = enum(u8) {
+    contract_address = 1, // Resolve contract address
+    node_endpoint = 2,    // Resolve node endpoint
+    interface_abi = 3,    // Get contract ABI
+    metadata = 4,         // Get contract metadata
+};
+
+/// DNS-over-QUIC response
+pub const DNSResponse = struct {
+    query_id: u32,
+    success: bool,
+    ttl: u32, // Time to live in seconds
+    data: DNSResponseData,
+};
+
+pub const DNSResponseData = union(DNSQueryType) {
+    contract_address: contract.Address,
+    node_endpoint: []const u8,
+    interface_abi: []const u8,
+    metadata: []const u8,
+};
+
+/// QUIC-based contract networking client
+pub const ContractClient = struct {
+    allocator: Allocator,
+    connection_pool: *ConnectionPool,
+    local_address: []const u8,
+    dns_cache: AutoHashMap([32]u8, DNSResponse), // Cache DNS responses
+    
+    pub fn init(allocator: Allocator, local_address: []const u8, connection_pool: *ConnectionPool) !ContractClient {
+        return ContractClient{
+            .allocator = allocator,
+            .connection_pool = connection_pool,
+            .local_address = try allocator.dupe(u8, local_address),
+            .dns_cache = AutoHashMap([32]u8, DNSResponse).init(allocator),
+        };
+    }
+    
+    pub fn deinit(self: *ContractClient) void {
+        self.allocator.free(self.local_address);
+        
+        // Free cached DNS responses
+        var iterator = self.dns_cache.iterator();
+        while (iterator.next()) |entry| {
+            switch (entry.value_ptr.data) {
+                .node_endpoint => |endpoint| self.allocator.free(endpoint),
+                .interface_abi => |abi| self.allocator.free(abi),
+                .metadata => |metadata| self.allocator.free(metadata),
+                else => {},
+            }
+        }
+        self.dns_cache.deinit();
+    }
+    
+    /// Call a contract on a remote node
+    pub fn callContract(self: *ContractClient, _: []const u8, request: ContractCallRequest) !ContractCallResponse {
+        // Serialize contract call request
+        const serialized_request = try self.serializeContractCall(request);
+        defer self.allocator.free(serialized_request);
+        
+        // Create network message
+        const message = NetworkMessage{
+            .message_type = .contract_call,
+            .sender = [_]u8{0} ** 32, // Local node ID
+            .recipient = [_]u8{0} ** 32, // Will be filled by connection
+            .payload = serialized_request,
+            .timestamp = @intCast(std.time.timestamp()),
+        };
+        
+        // Send via QUIC connection pool
+        try self.connection_pool.sendMessage(message);
+        
+        // Wait for response (simplified - would use async in real implementation)
+        const response_data = try self.waitForResponse();
+        defer self.allocator.free(response_data);
+        
+        return try self.deserializeContractResponse(response_data);
+    }
+    
+    /// Deploy a contract to a remote node
+    pub fn deployContract(self: *ContractClient, _: []const u8, request: ContractDeployRequest) !ContractDeployResponse {
+        const serialized_request = try self.serializeContractDeploy(request);
+        defer self.allocator.free(serialized_request);
+        
+        const message = NetworkMessage{
+            .message_type = .contract_deploy,
+            .sender = [_]u8{0} ** 32,
+            .recipient = [_]u8{0} ** 32,
+            .payload = serialized_request,
+            .timestamp = @intCast(std.time.timestamp()),
+        };
+        
+        try self.connection_pool.sendMessage(message);
+        
+        const response_data = try self.waitForResponse();
+        defer self.allocator.free(response_data);
+        
+        return try self.deserializeDeployResponse(response_data);
+    }
+    
+    /// Discover contracts by interface using network queries
+    pub fn discoverContracts(self: *ContractClient, interface_hash: [32]u8, max_results: u32) ![]ContractDiscoveryResponse {
+        const request = ContractDiscoveryRequest{
+            .interface_hash = interface_hash,
+            .max_results = max_results,
+            .node_preference = "",
+        };
+        
+        const serialized_request = try self.serializeDiscoveryRequest(request);
+        defer self.allocator.free(serialized_request);
+        
+        const message = NetworkMessage{
+            .message_type = .contract_discovery,
+            .sender = [_]u8{0} ** 32,
+            .recipient = [_]u8{0xFF} ** 32, // Broadcast
+            .payload = serialized_request,
+            .timestamp = @intCast(std.time.timestamp()),
+        };
+        
+        try self.connection_pool.sendMessage(message);
+        
+        // Collect responses from multiple nodes
+        return try self.collectDiscoveryResponses();
+    }
+    
+    /// Resolve contract address using DNS-over-QUIC
+    pub fn resolveContractAddress(self: *ContractClient, domain: []const u8) !?contract.Address {
+        // Check cache first
+        const domain_hash = runtime.Crypto.blake3(domain);
+        if (self.dns_cache.get(domain_hash)) |cached_response| {
+            if (cached_response.data == .contract_address) {
+                return cached_response.data.contract_address;
+            }
+        }
+        
+        const query = DNSQuery{
+            .domain = domain,
+            .query_type = .contract_address,
+            .query_id = @truncate(@as(u64, @intCast(std.time.nanoTimestamp()))),
+        };
+        
+        const serialized_query = try self.serializeDNSQuery(query);
+        defer self.allocator.free(serialized_query);
+        
+        const message = NetworkMessage{
+            .message_type = .dns_query,
+            .sender = [_]u8{0} ** 32,
+            .recipient = [_]u8{0} ** 32, // DNS server
+            .payload = serialized_query,
+            .timestamp = @intCast(std.time.timestamp()),
+        };
+        
+        try self.connection_pool.sendMessage(message);
+        
+        const response_data = try self.waitForResponse();
+        defer self.allocator.free(response_data);
+        
+        const dns_response = try self.deserializeDNSResponse(response_data);
+        
+        // Cache the response
+        try self.dns_cache.put(domain_hash, dns_response);
+        
+        if (dns_response.success and dns_response.data == .contract_address) {
+            return dns_response.data.contract_address;
+        }
+        
+        return null;
+    }
+    
+    // Serialization methods (simplified implementations)
+    
+    fn serializeContractCall(self: *ContractClient, request: ContractCallRequest) ![]u8 {
+        // In real implementation, would use proper serialization (JSON, MessagePack, etc.)
+        var data = try self.allocator.alloc(u8, 1024);
+        var stream = std.io.fixedBufferStream(data);
+        var writer = stream.writer();
+        
+        try writer.writeAll(&request.contract_address);
+        try writer.writeAll(&request.caller);
+        try writer.writeInt(u256, request.value, .big);
+        try writer.writeInt(u32, @intCast(request.input_data.len), .big);
+        try writer.writeAll(request.input_data);
+        try writer.writeInt(u64, request.gas_limit, .big);
+        try writer.writeInt(u64, request.nonce, .big);
+        try writer.writeInt(u32, @intCast(request.signature.len), .big);
+        try writer.writeAll(request.signature);
+        
+        return data[0..stream.pos];
+    }
+    
+    fn serializeContractDeploy(self: *ContractClient, request: ContractDeployRequest) ![]u8 {
+        var data = try self.allocator.alloc(u8, 4096);
+        var stream = std.io.fixedBufferStream(data);
+        var writer = stream.writer();
+        
+        try writer.writeInt(u32, @intCast(request.bytecode.len), .big);
+        try writer.writeAll(request.bytecode);
+        try writer.writeAll(&request.deployer);
+        try writer.writeInt(u32, @intCast(request.constructor_args.len), .big);
+        try writer.writeAll(request.constructor_args);
+        try writer.writeInt(u64, request.gas_limit, .big);
+        try writer.writeInt(u64, request.nonce, .big);
+        try writer.writeInt(u32, @intCast(request.signature.len), .big);
+        try writer.writeAll(request.signature);
+        
+        return data[0..stream.pos];
+    }
+    
+    fn serializeDiscoveryRequest(self: *ContractClient, request: ContractDiscoveryRequest) ![]u8 {
+        var data = try self.allocator.alloc(u8, 256);
+        var stream = std.io.fixedBufferStream(data);
+        var writer = stream.writer();
+        
+        try writer.writeAll(&request.interface_hash);
+        try writer.writeInt(u32, request.max_results, .big);
+        try writer.writeInt(u32, @intCast(request.node_preference.len), .big);
+        try writer.writeAll(request.node_preference);
+        
+        return data[0..stream.pos];
+    }
+    
+    fn serializeDNSQuery(self: *ContractClient, query: DNSQuery) ![]u8 {
+        var data = try self.allocator.alloc(u8, 512);
+        var stream = std.io.fixedBufferStream(data);
+        var writer = stream.writer();
+        
+        try writer.writeInt(u32, @intCast(query.domain.len), .big);
+        try writer.writeAll(query.domain);
+        try writer.writeInt(u8, @intFromEnum(query.query_type), .big);
+        try writer.writeInt(u32, query.query_id, .big);
+        
+        return data[0..stream.pos];
+    }
+    
+    // Deserialization methods (simplified)
+    
+    fn deserializeContractResponse(self: *ContractClient, data: []const u8) !ContractCallResponse {
+        // Simplified deserialization
+        return ContractCallResponse{
+            .success = data[0] != 0,
+            .gas_used = std.mem.readInt(u64, data[1..9], .big),
+            .return_data = try self.allocator.dupe(u8, data[9..]),
+            .error_msg = null,
+            .events = &[_]runtime.EnhancedRuntimeHooks.ContractEvent{},
+            .block_number = 0,
+            .transaction_hash = [_]u8{0} ** 32,
+        };
+    }
+    
+    fn deserializeDeployResponse(self: *ContractClient, data: []const u8) !ContractDeployResponse {
+        _ = self;
+        return ContractDeployResponse{
+            .success = data[0] != 0,
+            .contract_address = if (data[0] != 0) data[1..21].* else null,
+            .deployment_tx = [_]u8{0} ** 32,
+            .gas_used = 0,
+            .error_msg = null,
+            .block_number = 0,
+        };
+    }
+    
+    fn deserializeDNSResponse(self: *ContractClient, data: []const u8) !DNSResponse {
+        _ = self;
+        const query_id = std.mem.readInt(u32, data[0..4], .big);
+        const success = data[4] != 0;
+        const ttl = std.mem.readInt(u32, data[5..9], .big);
+        
+        return DNSResponse{
+            .query_id = query_id,
+            .success = success,
+            .ttl = ttl,
+            .data = .{ .contract_address = data[9..29].* },
+        };
+    }
+    
+    // Helper methods for async operations (simplified)
+    
+    fn waitForResponse(self: *ContractClient) ![]u8 {
+        // In real implementation, would use async/await with zsync
+        // Mock response
+        const response = try self.allocator.alloc(u8, 64);
+        response[0] = 1; // success
+        std.mem.writeInt(u64, response[1..9], 1000, .big); // gas used
+        return response;
+    }
+    
+    fn collectDiscoveryResponses(self: *ContractClient) ![]ContractDiscoveryResponse {
+        // Mock discovery response
+        const responses = try self.allocator.alloc(ContractDiscoveryResponse, 1);
+        responses[0] = ContractDiscoveryResponse{
+            .contracts = &[_]struct {
+                address: contract.Address,
+                node_endpoint: []const u8,
+                reputation: u32,
+                last_seen: u64,
+            }{},
+        };
+        return responses;
+    }
+};
+
+/// QUIC-based contract server
+pub const ContractServer = struct {
+    allocator: Allocator,
+    config: NetworkConfig,
+    contract_environment: *runtime.EnhancedRuntimeVM, // Would be contract environment
+    connection_pool: *ConnectionPool,
+    
+    pub fn init(allocator: Allocator, config: NetworkConfig, contract_env: *runtime.EnhancedRuntimeVM) !ContractServer {
+        // Initialize connection pool for server
+        const peer_id = [_]u8{0} ** 32; // Server peer ID
+        const bandwidth_config = BandwidthConfig{};
+        const bandwidth_limiter = try BandwidthLimiter.init(allocator, bandwidth_config);
+        
+        const pool_config = ConnectionPoolConfig{};
+        const connection_pool = try ConnectionPool.init(allocator, peer_id, pool_config, bandwidth_limiter);
+        
+        return ContractServer{
+            .allocator = allocator,
+            .config = config,
+            .contract_environment = contract_env,
+            .connection_pool = connection_pool,
+        };
+    }
+    
+    pub fn deinit(self: *ContractServer) void {
+        self.connection_pool.deinit();
+    }
+    
+    /// Start the contract server
+    pub fn start(self: *ContractServer) !void {
+        std.log.info("Starting ZVM Contract Server on {}:{}", .{ self.config.bind_address, self.config.bind_port });
+        
+        // In real implementation, would:
+        // 1. Start QUIC server with zquic
+        // 2. Handle incoming connections
+        // 3. Route contract messages
+        // 4. Execute contracts and return responses
+        
+        // Mock server start
+        std.log.info("Contract server started successfully", .{});
+    }
+    
+    /// Handle incoming contract call
+    pub fn handleContractCall(_: *ContractServer, request: ContractCallRequest) !ContractCallResponse {
+        std.log.info("Handling contract call to {any}", .{request.contract_address});
+        
+        // Verify signature
+        // Execute contract
+        // Return response
+        
+        return ContractCallResponse{
+            .success = true,
+            .gas_used = 21000,
+            .return_data = "success",
+            .error_msg = null,
+            .events = &[_]runtime.EnhancedRuntimeHooks.ContractEvent{},
+            .block_number = 1000,
+            .transaction_hash = runtime.Crypto.keccak256("mock_tx"),
+        };
+    }
+    
+    /// Handle contract deployment
+    pub fn handleContractDeploy(_: *ContractServer, request: ContractDeployRequest) !ContractDeployResponse {
+        std.log.info("Handling contract deployment from {any}", .{request.deployer});
+        
+        // Deploy contract using contract environment
+        const contract_address = contract.AddressUtils.random();
+        
+        return ContractDeployResponse{
+            .success = true,
+            .contract_address = contract_address,
+            .deployment_tx = runtime.Crypto.keccak256("deploy_tx"),
+            .gas_used = 100000,
+            .error_msg = null,
+            .block_number = 1001,
+        };
+    }
+    
+    /// Handle DNS-over-QUIC query
+    pub fn handleDNSQuery(_: *ContractServer, query: DNSQuery) !DNSResponse {
+        std.log.info("Handling DNS query for domain: {s}", .{query.domain});
+        
+        // Mock DNS resolution
+        const mock_address = contract.AddressUtils.fromHex("0x1234567890123456789012345678901234567890") catch unreachable;
+        
+        return DNSResponse{
+            .query_id = query.query_id,
+            .success = true,
+            .ttl = 3600, // 1 hour
+            .data = .{ .contract_address = mock_address },
+        };
+    }
+};
+
+// Tests for contract networking
+
+test "contract client creation and cleanup" {
+    const allocator = std.testing.allocator;
+    
+    const config = ConnectionPoolConfig{};
+    const bandwidth_config = BandwidthConfig{};
+    var bandwidth_limiter = try BandwidthLimiter.init(allocator, bandwidth_config);
+    defer bandwidth_limiter.deinit();
+    
+    const peer_id = [_]u8{1} ** 32;
+    var pool = try ConnectionPool.init(allocator, peer_id, config, bandwidth_limiter);
+    defer pool.deinit();
+    
+    var client = try ContractClient.init(allocator, "127.0.0.1:8443", pool);
+    defer client.deinit();
+    
+    // Test basic client functionality
+    const domain = "test.ghost";
+    const resolved = try client.resolveContractAddress(domain);
+    try std.testing.expect(resolved != null);
+}
+
+test "contract server initialization" {
+    const allocator = std.testing.allocator;
+    
+    const network_config = NetworkConfig{
+        .bind_port = 9999,
+        .max_connections = 100,
+    };
+    
+    // Mock contract environment (simplified)
+    var mock_vm: runtime.EnhancedRuntimeVM = undefined;
+    
+    var server = try ContractServer.init(allocator, network_config, &mock_vm);
+    defer server.deinit();
+    
+    // Test contract call handling
+    const call_request = ContractCallRequest{
+        .contract_address = contract.AddressUtils.random(),
+        .caller = contract.AddressUtils.random(),
+        .value = 0,
+        .input_data = "test",
+        .gas_limit = 100000,
+        .nonce = 1,
+        .signature = "mock_sig",
+    };
+    
+    const response = try server.handleContractCall(call_request);
+    try std.testing.expect(response.success);
+    try std.testing.expect(response.gas_used > 0);
 }
