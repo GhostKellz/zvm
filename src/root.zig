@@ -27,6 +27,14 @@ pub const state = struct {
     pub const JournaledState = @import("state/journaled.zig").JournaledState;
     pub const TransientStorageImpl = @import("state/transient.zig").TransientStorageImpl;
     pub const StorageAccess = @import("state/storage.zig").StorageAccess;
+    pub const AccountState = @import("state/accounts.zig").AccountState;
+};
+pub const gas_costs = @import("gas/costs.zig");
+pub const runtime = struct {
+    pub const KalixLoader = @import("runtime/kalix_loader.zig").KalixLoader;
+};
+pub const container = struct {
+    pub const BytecodeContainer = @import("bytecode/container.zig").BytecodeContainer;
 };
 pub const hedera = struct {
     pub const syscalls = @import("chains/hedera/syscalls.zig");
@@ -49,6 +57,9 @@ pub const Storage = state.Storage;
 pub const TransientStorage = state.TransientStorage;
 pub const JournaledState = state.JournaledState;
 pub const TransientStorageImpl = state.TransientStorageImpl;
+pub const AccountState = state.AccountState;
+pub const BytecodeContainer = container.BytecodeContainer;
+pub const KalixLoader = runtime.KalixLoader;
 
 test {
     std.testing.refAllDecls(@This());

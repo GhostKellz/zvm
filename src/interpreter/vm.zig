@@ -123,6 +123,8 @@ pub const VM = struct {
     allocator: std.mem.Allocator,
     /// Halted flag
     halted: bool,
+    /// Reverted flag (execution failed)
+    reverted: bool,
     /// PC modified flag (for jumps)
     pc_modified: bool,
     /// Static call mode flag (disallows state modifications)
@@ -144,6 +146,7 @@ pub const VM = struct {
             .account_state = null,
             .allocator = allocator,
             .halted = false,
+            .reverted = false,
             .pc_modified = false,
             .is_static = false,
         };
@@ -165,6 +168,7 @@ pub const VM = struct {
         self.bytecode = bytecode;
         self.pc = 0;
         self.halted = false;
+        self.reverted = false;
         self.stack.clear();
         self.memory.clear();
         self.return_data.clearRetainingCapacity();
@@ -172,14 +176,25 @@ pub const VM = struct {
 
     /// Execute bytecode
     pub fn execute(self: *VM) VMError!ExecutionResult {
+        // Reset execution state
+        self.reverted = false;
+
+        // Execute until halted or end of bytecode
         while (!self.halted and self.pc < self.bytecode.len) {
-            try self.step();
+            self.step() catch |err| {
+                if (err == error.Revert) {
+                    self.reverted = true;
+                    self.halted = true;
+                } else {
+                    return err;
+                }
+            };
         }
 
         const gas_used = self.gas.finalUsed();
 
         return ExecutionResult{
-            .success = !self.halted, // TODO: Track execution status properly
+            .success = !self.reverted,
             .gas_used = gas_used,
             .return_data = self.return_data.items,
             .logs = self.logs.items,
@@ -728,6 +743,30 @@ pub const VM = struct {
                 const key = try self.stack.pop();
                 const value = try self.stack.pop();
                 self.transient_storage.store(self.context.address, key, value);
+            },
+
+            // === Storage Utilities ===
+            .TABLEHASH => {
+                // Stack: table_slot, key_1, [key_2, ...] (simplified: single key for now)
+                // For KALIX: table_slot is pushed first, then key
+                // Pop in reverse order: key first, then table_slot
+                const key = try self.stack.pop();
+                const table_slot = try self.stack.pop();
+
+                // Hash: keccak256(table_slot || key)
+                var hasher = std.crypto.hash.sha3.Keccak256.init(.{});
+
+                const slot_bytes = table_slot.toBytes();
+                const key_bytes = key.toBytes();
+
+                hasher.update(&slot_bytes);
+                hasher.update(&key_bytes);
+
+                var hash: [32]u8 = undefined;
+                hasher.final(&hash);
+
+                // Push hashed storage key
+                try self.stack.push(U256.fromBytes(hash));
             },
 
             // === Hedera Token Service (HTS) ===

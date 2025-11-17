@@ -62,6 +62,9 @@ pub const Opcode = enum(u8) {
     RIPEMD160 = 0x72, // RIPEMD-160 hash
     BLAKE2B = 0x73, // Blake2b hash
 
+    // === Storage Utilities (0xD0-0xDF) ===
+    TABLEHASH = 0xD2, // Table key hashing for structured storage
+
     // === Memory Operations (0x80-0x8F) ===
     MLOAD = 0x80, // Load word from memory
     MSTORE = 0x81, // Store word to memory
@@ -181,6 +184,9 @@ pub const Opcode = enum(u8) {
             .RIPEMD160 => 600,
             .BLAKE2B => 30,
 
+            // Storage utilities
+            .TABLEHASH => 30, // Same as KECCAK256
+
             // Storage (very expensive)
             .SLOAD => 100, // Warm: 100, Cold: 2100
             .SSTORE => 100, // Complex: 20000 for setting non-zero from zero
@@ -254,7 +260,7 @@ pub const Opcode = enum(u8) {
 
             .PUSH1, .PUSH2, .PUSH4, .PUSH8, .PUSH16, .PUSH32, .DUP1, .DUP2, .DUP3, .DUP4 => 0,
 
-            .POP, .ISZERO, .NOT, .MLOAD, .SLOAD, .TLOAD, .JUMP, .EXTCODESIZE, .EXTCODEHASH, .BLOCKHASH => 1,
+            .POP, .ISZERO, .NOT, .MLOAD, .SLOAD, .TLOAD, .JUMP, .EXTCODESIZE, .EXTCODEHASH, .BLOCKHASH, .TABLEHASH => 1,
 
             .ADD, .SUB, .MUL, .DIV, .SDIV, .MOD, .SMOD, .EXP, .SIGNEXTEND, .LT, .GT, .SLT, .SGT, .EQ, .AND, .OR, .XOR, .BYTE, .SHL, .SHR, .SAR, .KECCAK256, .MSTORE, .MSTORE8, .SSTORE, .TSTORE, .JUMPI, .RETURN, .REVERT, .SWAP1, .SWAP2, .SWAP3, .SWAP4, .CALLDATALOAD => 2,
 
@@ -287,6 +293,8 @@ pub const Opcode = enum(u8) {
         return switch (self) {
             .HALT, .NOP, .POP, .JUMP, .JUMPDEST, .RETURN, .REVERT, .MSTORE, .MSTORE8, .SSTORE, .TSTORE, .SELFDESTRUCT, .LOG0, .LOG1, .LOG2, .LOG3, .LOG4, .CALLDATACOPY, .CODECOPY, .RETURNDATACOPY, .EXTCODECOPY => 0,
             .CREATE, .CREATE2, .CALL, .CALLCODE, .DELEGATECALL, .STATICCALL => 1, // Push success/address
+
+            .TABLEHASH => 1, // Pushes hashed storage key
 
             // Most operations push 1 result
             else => 1,
