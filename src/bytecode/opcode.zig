@@ -86,6 +86,8 @@ pub const Opcode = enum(u8) {
     RETURN = 0xA8, // Return from call
     REVERT = 0xA9, // Revert state changes
     SELFDESTRUCT = 0xAA, // Destroy contract
+    CREATE = 0xAB, // Create new contract
+    CREATE2 = 0xAC, // Create new contract with deterministic address
 
     // === Context Information (0xB0-0xCF) ===
     ADDRESS = 0xB0, // Current contract address
@@ -202,6 +204,7 @@ pub const Opcode = enum(u8) {
 
             // Calls (base cost, dynamic cost calculated separately)
             .CALL, .CALLCODE, .DELEGATECALL, .STATICCALL => 100, // Base, +many dynamic costs
+            .CREATE, .CREATE2 => 32000, // Base cost for contract creation
             .RETURN, .REVERT => 0,
             .SELFDESTRUCT => 5000, // + refund
 
@@ -234,7 +237,7 @@ pub const Opcode = enum(u8) {
     /// Check if this opcode modifies state
     pub fn isStateModifying(self: Opcode) bool {
         return switch (self) {
-            .SSTORE, .TSTORE, .CALL, .CALLCODE, .DELEGATECALL, .SELFDESTRUCT, .HTS_TRANSFER, .HTS_MINT, .HTS_BURN, .HTS_ASSOCIATE, .HTS_DISSOCIATE, .HTS_APPROVE, .HTS_CREATE, .HCS_SUBMIT, .HCS_CREATE_TOPIC, .HCS_UPDATE_TOPIC, .HCS_DELETE_TOPIC, .LOG0, .LOG1, .LOG2, .LOG3, .LOG4 => true,
+            .SSTORE, .TSTORE, .CALL, .CALLCODE, .DELEGATECALL, .SELFDESTRUCT, .CREATE, .CREATE2, .HTS_TRANSFER, .HTS_MINT, .HTS_BURN, .HTS_ASSOCIATE, .HTS_DISSOCIATE, .HTS_APPROVE, .HTS_CREATE, .HCS_SUBMIT, .HCS_CREATE_TOPIC, .HCS_UPDATE_TOPIC, .HCS_DELETE_TOPIC, .LOG0, .LOG1, .LOG2, .LOG3, .LOG4 => true,
             else => false,
         };
     }
@@ -261,6 +264,8 @@ pub const Opcode = enum(u8) {
 
             .CALL, .CALLCODE => 7,
             .DELEGATECALL, .STATICCALL => 6,
+            .CREATE => 3, // value, offset, size
+            .CREATE2 => 4, // value, offset, size, salt
 
             .LOG0 => 2,
             .LOG1 => 3,
@@ -281,6 +286,7 @@ pub const Opcode = enum(u8) {
     pub fn stackPushes(self: Opcode) u8 {
         return switch (self) {
             .HALT, .NOP, .POP, .JUMP, .JUMPDEST, .RETURN, .REVERT, .MSTORE, .MSTORE8, .SSTORE, .TSTORE, .SELFDESTRUCT, .LOG0, .LOG1, .LOG2, .LOG3, .LOG4, .CALLDATACOPY, .CODECOPY, .RETURNDATACOPY, .EXTCODECOPY => 0,
+            .CREATE, .CREATE2, .CALL, .CALLCODE, .DELEGATECALL, .STATICCALL => 1, // Push success/address
 
             // Most operations push 1 result
             else => 1,

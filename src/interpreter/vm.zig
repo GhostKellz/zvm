@@ -8,6 +8,7 @@ const Stack = @import("stack.zig").Stack;
 const Memory = @import("memory.zig").Memory;
 const Gas = @import("../gas/meter.zig").Gas;
 const storage_mod = @import("../state/storage.zig");
+const accounts_mod = @import("../state/accounts.zig");
 
 const U256 = types.U256;
 const Address = types.Address;
@@ -16,6 +17,7 @@ const Opcode = opcode.Opcode;
 const Storage = storage_mod.Storage;
 const TransientStorage = storage_mod.TransientStorage;
 const StorageAccess = storage_mod.StorageAccess;
+const AccountState = accounts_mod.AccountState;
 
 // Hedera syscalls (optional)
 const hedera_mod = @import("../chains/hedera/syscalls.zig");
@@ -35,6 +37,10 @@ pub const VMError = error{
     InvalidOffset,
     DivisionByZero,
     Halted,
+    AccountStateNotAvailable,
+    StateModificationInStaticCall,
+    AccountNotFound,
+    InsufficientBalance,
 } || std.mem.Allocator.Error;
 
 /// Execution context for the VM
@@ -111,12 +117,16 @@ pub const VM = struct {
     transient_storage: TransientStorage,
     /// Hedera syscalls (optional, null if not on Hedera)
     hedera_syscalls: ?HederaSyscalls,
+    /// Account state (for CREATE/CALL opcodes)
+    account_state: ?*AccountState,
     /// Allocator
     allocator: std.mem.Allocator,
     /// Halted flag
     halted: bool,
     /// PC modified flag (for jumps)
     pc_modified: bool,
+    /// Static call mode flag (disallows state modifications)
+    is_static: bool,
 
     pub fn init(allocator: std.mem.Allocator, gas_limit: u64, storage: Storage, transient_storage: TransientStorage, hedera_syscalls: ?HederaSyscalls) VM {
         return .{
@@ -131,9 +141,11 @@ pub const VM = struct {
             .storage = storage,
             .transient_storage = transient_storage,
             .hedera_syscalls = hedera_syscalls,
+            .account_state = null,
             .allocator = allocator,
             .halted = false,
             .pc_modified = false,
+            .is_static = false,
         };
     }
 
@@ -159,7 +171,7 @@ pub const VM = struct {
     }
 
     /// Execute bytecode
-    pub fn execute(self: *VM) !ExecutionResult {
+    pub fn execute(self: *VM) VMError!ExecutionResult {
         while (!self.halted and self.pc < self.bytecode.len) {
             try self.step();
         }
@@ -879,11 +891,441 @@ pub const VM = struct {
                 }
             },
 
+            // === Contract Deployment & Calls ===
+
+            .CREATE => {
+                if (self.is_static) return error.StateModificationInStaticCall;
+                const account_state = self.account_state orelse return error.AccountStateNotAvailable;
+
+                // Stack: value, offset, size
+                const value = try self.stack.pop();
+                const offset = try self.stack.pop();
+                const size = try self.stack.pop();
+
+                const offset_usize = offset.toUsize();
+                const size_usize = size.toUsize();
+
+                // Get init code from memory
+                const init_code = try self.memory.slice(offset_usize, size_usize);
+
+                // Generate new contract address: keccak256(rlp([sender, nonce]))
+                const sender = self.context.address;
+                const nonce = account_state.getNonce(sender);
+                const new_address = try self.generateContractAddress(sender, nonce);
+
+                // Increment nonce
+                try account_state.incrementNonce(sender);
+
+                // Check if address already exists
+                if (account_state.exists(new_address)) {
+                    try self.stack.push(U256.zero()); // Failure
+                    return;
+                }
+
+                // Create new account
+                _ = try account_state.createAccount(new_address);
+
+                // Transfer value if specified
+                if (!value.isZero()) {
+                    account_state.transfer(sender, new_address, value) catch {
+                        try self.stack.push(U256.zero()); // Transfer failed
+                        return;
+                    };
+                }
+
+                // Execute init code to get runtime bytecode
+                const remaining_gas = self.gas.limit - self.gas.used;
+                var constructor_vm = VM.init(
+                    self.allocator,
+                    remaining_gas,
+                    self.storage,
+                    self.transient_storage,
+                    self.hedera_syscalls,
+                );
+                constructor_vm.account_state = self.account_state;
+                defer constructor_vm.deinit();
+
+                constructor_vm.loadBytecode(init_code);
+                constructor_vm.context.address = new_address;
+                constructor_vm.context.caller = sender;
+                constructor_vm.context.value = value;
+
+                const result = constructor_vm.execute() catch {
+                    // Constructor failed
+                    account_state.destroyAccount(new_address);
+                    try self.stack.push(U256.zero()); // Return 0 on failure
+                    return;
+                };
+
+                // Charge gas used by constructor
+                try self.gas.charge(result.gas_used);
+
+                // Store returned bytecode as contract code
+                if (result.return_data.len > 0) {
+                    try account_state.deployContract(new_address, result.return_data);
+
+                    // Charge gas for code storage (200 gas per byte)
+                    try self.gas.charge(result.return_data.len * 200);
+                }
+
+                // Push new address to stack
+                try self.stack.push(addressToU256(new_address));
+            },
+
+            .CREATE2 => {
+                if (self.is_static) return error.StateModificationInStaticCall;
+                const account_state = self.account_state orelse return error.AccountStateNotAvailable;
+
+                // Stack: value, offset, size, salt
+                const value = try self.stack.pop();
+                const offset = try self.stack.pop();
+                const size = try self.stack.pop();
+                const salt = try self.stack.pop();
+
+                const offset_usize = offset.toUsize();
+                const size_usize = size.toUsize();
+
+                // Get init code from memory
+                const init_code = try self.memory.slice(offset_usize, size_usize);
+
+                // CREATE2 address: keccak256(0xff || sender || salt || keccak256(init_code))
+                const sender = self.context.address;
+                const new_address = try self.generateCreate2Address(sender, salt, init_code);
+
+                // Check if address already exists
+                if (account_state.exists(new_address)) {
+                    try self.stack.push(U256.zero()); // Failure
+                    return;
+                }
+
+                // Create new account
+                _ = try account_state.createAccount(new_address);
+
+                // Transfer value if specified
+                if (!value.isZero()) {
+                    account_state.transfer(sender, new_address, value) catch {
+                        try self.stack.push(U256.zero()); // Transfer failed
+                        return;
+                    };
+                }
+
+                // Execute init code (similar to CREATE)
+                const remaining_gas = self.gas.limit - self.gas.used;
+                var constructor_vm = VM.init(
+                    self.allocator,
+                    remaining_gas,
+                    self.storage,
+                    self.transient_storage,
+                    self.hedera_syscalls,
+                );
+                constructor_vm.account_state = self.account_state;
+                defer constructor_vm.deinit();
+
+                constructor_vm.loadBytecode(init_code);
+                constructor_vm.context.address = new_address;
+                constructor_vm.context.caller = sender;
+                constructor_vm.context.value = value;
+
+                const result = constructor_vm.execute() catch {
+                    account_state.destroyAccount(new_address);
+                    try self.stack.push(U256.zero());
+                    return;
+                };
+
+                try self.gas.charge(result.gas_used);
+
+                if (result.return_data.len > 0) {
+                    try account_state.deployContract(new_address, result.return_data);
+                    try self.gas.charge(result.return_data.len * 200);
+                }
+
+                try self.stack.push(addressToU256(new_address));
+            },
+
+            .CALL => {
+                const account_state = self.account_state orelse return error.AccountStateNotAvailable;
+
+                // Stack: gas, address, value, argsOffset, argsSize, retOffset, retSize
+                const gas_limit = try self.stack.pop();
+                const address_u256 = try self.stack.pop();
+                const value = try self.stack.pop();
+                const args_offset = try self.stack.pop();
+                const args_size = try self.stack.pop();
+                const ret_offset = try self.stack.pop();
+                const ret_size = try self.stack.pop();
+
+                const callee_address = u256ToAddress(address_u256);
+
+                // Get call data from memory
+                const calldata = try self.memory.slice(args_offset.toUsize(), args_size.toUsize());
+
+                // Check if account exists
+                if (!account_state.exists(callee_address)) {
+                    try self.stack.push(U256.zero()); // Failure
+                    return;
+                }
+
+                // Transfer value
+                if (!value.isZero()) {
+                    account_state.transfer(self.context.address, callee_address, value) catch {
+                        try self.stack.push(U256.zero()); // Transfer failed
+                        return;
+                    };
+                }
+
+                const callee_code = account_state.getCode(callee_address);
+                if (callee_code.len == 0) {
+                    // Empty code, return success with no data
+                    try self.stack.push(U256.one());
+                    return;
+                }
+
+                // Execute callee code
+                var callee_vm = VM.init(
+                    self.allocator,
+                    gas_limit.toU64(),
+                    self.storage,
+                    self.transient_storage,
+                    self.hedera_syscalls,
+                );
+                callee_vm.account_state = self.account_state;
+                defer callee_vm.deinit();
+
+                callee_vm.loadBytecode(callee_code);
+                callee_vm.context.address = callee_address;
+                callee_vm.context.caller = self.context.address;
+                callee_vm.context.value = value;
+                callee_vm.context.calldata = calldata;
+
+                const result = callee_vm.execute() catch {
+                    // Call failed
+                    try self.stack.push(U256.zero());
+                    return;
+                };
+
+                // Copy return data to memory
+                const ret_size_usize = ret_size.toUsize();
+                if (result.return_data.len > 0 and ret_size_usize > 0) {
+                    const copy_size = @min(result.return_data.len, ret_size_usize);
+                    for (result.return_data[0..copy_size], 0..) |byte, i| {
+                        try self.memory.store8(ret_offset.toUsize() + i, byte);
+                    }
+                }
+
+                // Update return data buffer
+                self.return_data.clearRetainingCapacity();
+                try self.return_data.appendSlice(self.allocator, result.return_data);
+
+                // Charge gas used by callee
+                try self.gas.charge(result.gas_used);
+
+                // Push success (1) to stack
+                try self.stack.push(U256.one());
+            },
+
+            .DELEGATECALL => {
+                const account_state = self.account_state orelse return error.AccountStateNotAvailable;
+
+                // Stack: gas, address, argsOffset, argsSize, retOffset, retSize
+                const gas_limit = try self.stack.pop();
+                const address_u256 = try self.stack.pop();
+                const args_offset = try self.stack.pop();
+                const args_size = try self.stack.pop();
+                const ret_offset = try self.stack.pop();
+                const ret_size = try self.stack.pop();
+
+                const callee_address = u256ToAddress(address_u256);
+
+                // Get call data
+                const calldata = try self.memory.slice(args_offset.toUsize(), args_size.toUsize());
+
+                if (!account_state.exists(callee_address)) {
+                    try self.stack.push(U256.zero());
+                    return;
+                }
+
+                const callee_code = account_state.getCode(callee_address);
+                if (callee_code.len == 0) {
+                    try self.stack.push(U256.one());
+                    return;
+                }
+
+                // Execute with CURRENT context (delegatecall semantics)
+                var callee_vm = VM.init(
+                    self.allocator,
+                    gas_limit.toU64(),
+                    self.storage,
+                    self.transient_storage,
+                    self.hedera_syscalls,
+                );
+                callee_vm.account_state = self.account_state;
+                defer callee_vm.deinit();
+
+                callee_vm.loadBytecode(callee_code);
+                callee_vm.context = self.context; // Use caller's context!
+                callee_vm.context.calldata = calldata;
+
+                const result = callee_vm.execute() catch {
+                    try self.stack.push(U256.zero());
+                    return;
+                };
+
+                // Copy return data
+                const ret_size_usize = ret_size.toUsize();
+                if (result.return_data.len > 0 and ret_size_usize > 0) {
+                    const copy_size = @min(result.return_data.len, ret_size_usize);
+                    for (result.return_data[0..copy_size], 0..) |byte, i| {
+                        try self.memory.store8(ret_offset.toUsize() + i, byte);
+                    }
+                }
+
+                self.return_data.clearRetainingCapacity();
+                try self.return_data.appendSlice(self.allocator, result.return_data);
+
+                try self.gas.charge(result.gas_used);
+                try self.stack.push(U256.one());
+            },
+
+            .STATICCALL => {
+                const account_state = self.account_state orelse return error.AccountStateNotAvailable;
+
+                // Stack: gas, address, argsOffset, argsSize, retOffset, retSize
+                const gas_limit = try self.stack.pop();
+                const address_u256 = try self.stack.pop();
+                const args_offset = try self.stack.pop();
+                const args_size = try self.stack.pop();
+                const ret_offset = try self.stack.pop();
+                const ret_size = try self.stack.pop();
+
+                const callee_address = u256ToAddress(address_u256);
+
+                const calldata = try self.memory.slice(args_offset.toUsize(), args_size.toUsize());
+
+                if (!account_state.exists(callee_address)) {
+                    try self.stack.push(U256.zero());
+                    return;
+                }
+
+                const callee_code = account_state.getCode(callee_address);
+                if (callee_code.len == 0) {
+                    try self.stack.push(U256.one());
+                    return;
+                }
+
+                // Execute in static mode (no state modifications allowed)
+                var callee_vm = VM.init(
+                    self.allocator,
+                    gas_limit.toU64(),
+                    self.storage,
+                    self.transient_storage,
+                    self.hedera_syscalls,
+                );
+                callee_vm.account_state = self.account_state;
+                callee_vm.is_static = true; // Mark as static call
+                defer callee_vm.deinit();
+
+                callee_vm.loadBytecode(callee_code);
+                callee_vm.context.address = callee_address;
+                callee_vm.context.caller = self.context.address;
+                callee_vm.context.value = U256.zero(); // No value in static call
+                callee_vm.context.calldata = calldata;
+
+                const result = callee_vm.execute() catch {
+                    try self.stack.push(U256.zero());
+                    return;
+                };
+
+                const ret_size_usize = ret_size.toUsize();
+                if (result.return_data.len > 0 and ret_size_usize > 0) {
+                    const copy_size = @min(result.return_data.len, ret_size_usize);
+                    for (result.return_data[0..copy_size], 0..) |byte, i| {
+                        try self.memory.store8(ret_offset.toUsize() + i, byte);
+                    }
+                }
+
+                self.return_data.clearRetainingCapacity();
+                try self.return_data.appendSlice(self.allocator, result.return_data);
+
+                try self.gas.charge(result.gas_used);
+                try self.stack.push(U256.one());
+            },
+
+            .SELFDESTRUCT => {
+                if (self.is_static) return error.StateModificationInStaticCall;
+                const account_state = self.account_state orelse return error.AccountStateNotAvailable;
+
+                const recipient_u256 = try self.stack.pop();
+                const recipient = u256ToAddress(recipient_u256);
+
+                // Get contract's balance
+                const balance = account_state.getBalance(self.context.address);
+
+                // Transfer all balance to recipient
+                if (!balance.isZero()) {
+                    try account_state.transfer(self.context.address, recipient, balance);
+                }
+
+                // Mark account for deletion
+                account_state.destroyAccount(self.context.address);
+
+                // Refund gas for clearing storage (5000 per cleared slot, max 24000)
+                self.gas.refund(24000);
+
+                // Halt execution
+                self.halted = true;
+            },
+
             else => {
                 std.debug.print("Unimplemented opcode: {any}\n", .{op});
                 return error.InvalidOpcode;
             },
         }
+    }
+
+    /// Generate contract address using CREATE formula: keccak256(rlp([sender, nonce]))
+    fn generateContractAddress(_: *VM, sender: Address, nonce: u64) !Address {
+        // Simplified: keccak256(sender || nonce)
+        // Full RLP encoding would be more complex but this works for our purposes
+        var data: [28]u8 = undefined;
+        @memcpy(data[0..20], &sender.bytes);
+        std.mem.writeInt(u64, data[20..28], nonce, .big);
+
+        var hash: [32]u8 = undefined;
+        std.crypto.hash.sha3.Keccak256.hash(&data, &hash, .{});
+
+        var addr: [20]u8 = undefined;
+        @memcpy(&addr, hash[12..32]);
+        return Address{ .bytes = addr };
+    }
+
+    /// Generate contract address using CREATE2 formula: keccak256(0xff || sender || salt || keccak256(init_code))
+    fn generateCreate2Address(_: *VM, sender: Address, salt: U256, init_code: []const u8) !Address {
+        var hasher = std.crypto.hash.sha3.Keccak256.init(.{});
+
+        // 0xff prefix
+        const prefix = [_]u8{0xff};
+        hasher.update(&prefix);
+
+        // sender (20 bytes)
+        hasher.update(&sender.bytes);
+
+        // salt (32 bytes)
+        const salt_bytes = salt.toBytes();
+        hasher.update(&salt_bytes);
+
+        // keccak256(init_code)
+        var code_hash: [32]u8 = undefined;
+        std.crypto.hash.sha3.Keccak256.hash(init_code, &code_hash, .{});
+        hasher.update(&code_hash);
+
+        // Final hash
+        var hash: [32]u8 = undefined;
+        hasher.final(&hash);
+
+        // Take last 20 bytes as address
+        var addr: [20]u8 = undefined;
+        @memcpy(&addr, hash[12..32]);
+        return Address{ .bytes = addr };
     }
 
     fn addressToU256(addr: Address) U256 {
