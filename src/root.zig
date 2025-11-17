@@ -32,6 +32,7 @@ pub const state = struct {
 pub const gas_costs = @import("gas/costs.zig");
 pub const runtime = struct {
     pub const KalixLoader = @import("runtime/kalix_loader.zig").KalixLoader;
+    pub const ZelixBridge = @import("runtime/zelix_bridge.zig").ZelixBridge;
 };
 pub const container = struct {
     pub const BytecodeContainer = @import("bytecode/container.zig").BytecodeContainer;
@@ -44,6 +45,16 @@ pub const hedera = struct {
     pub const HCSOperation = syscalls.HCSOperation;
     pub const HederaGas = syscalls.HederaGas;
     pub const MockHedera = mock.MockHedera;
+};
+pub const evm = struct {
+    pub const EvmCompat = @import("chains/evm/compat.zig").EvmCompat;
+    pub const precompiles = @import("chains/evm/precompiles.zig");
+    pub const PrecompileAddress = precompiles.PrecompileAddress;
+};
+pub const soroban = struct {
+    pub const SorobanBridge = @import("chains/soroban/bridge.zig").SorobanBridge;
+    pub const Val = @import("chains/soroban/bridge.zig").Val;
+    pub const HostFunctions = @import("chains/soroban/bridge.zig").HostFunctions;
 };
 
 // Re-export common types for convenience
