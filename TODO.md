@@ -1,106 +1,35 @@
-🚀 TODO: Ghostplane/Ghostbridge + ZVM Native WASM Contract Runtime
-1. WASM/ZVM Runtime Integration (Zig Native)
+zvm: the VM
 
-Update/Verify ZVM Runtime:
+zvm = Zig Virtual Machine is a great name. Use it as:
 
-    Ensure latest ZVM can execute both WASM and ZVM bytecode.
+“Execution engine for smart contracts – native IR + EVM compatibility”
 
-    Test deploy/execute flows for contracts compiled from Zig → WASM and ZVM-native.
+Scope:
 
-    Add missing host functions (e.g. storage, crypto, event emit, gas metering).
+Has its own IR/bytecode designed for:
 
-    Contract API Exposure:
+determinism
 
-        Design a ContractRegistry interface in Ghostplane/bridge to deploy, load, and call contracts.
+simple gas metering
 
-        Enable contract bytecode upload via CLI/API (optionally through gRPC).
+post-quantum crypto hooks
 
-        Wire up deployment/execute endpoints in Ghostbridge proto/services.
+Provides:
 
-2. Post-Quantum Crypto Everywhere
+EVM compatibility layer (translate EVM bytecode → zvm IR or interpret natively)
 
-Direct Zcrypto/Zsig Integration:
+Hedera integration (contracts as services)
 
-    No FFI to Rust—use zcrypto + zsig for all signing, keygen, and post-quantum operations.
+Soroban bridge (compile your language down to WASM/Soroban where needed)
 
-    Ensure host functions in ZVM expose Ed25519, ML-KEM, ML-DSA, and (if needed) BLS/Schnorr.
+Language choice for implementation:
 
-    Expose keygen, sign, verify, and aggregate APIs to contracts.
+VM core:
 
-    Contract-level Signature Support:
+Rust → easy crypto + tooling ecosystem, good async, accepted in infra world
 
-        Multi-sig, threshold, aggregate, and PQ signature verification in ZVM/WASM.
+Zig → tighter integration with your stack, leaner runtime
 
-3. QUIC/DoQ/HTTP3 Transport
+Given your world:
 
-zquic Integration:
-
-    Confirm zquic provides QUIC, DoQ, HTTP/3 endpoints for contract calls, gRPC, DNS, etc.
-
-    Implement async DoQ/QUIC API for contract and DNS interaction.
-
-    Test with cns/ghostplane/bridge as actual servers, not just demo code.
-
-    Multiplexed Networking:
-
-        Add connection pooling and multiplexing for high-concurrency blockchain workloads.
-
-        Support DNS-over-QUIC and gRPC on same endpoints if desired.
-
-4. Contract Storage and State Management
-
-Integrate zqlite (or pluggable backend):
-
-    Use zqlite for contract persistent storage (state, events, receipts, etc).
-
-    Add contract state root management for rollups/checkpointing.
-
-    State Update APIs:
-
-        Expose storage read/write/delete as host functions in ZVM/WASM.
-
-5. Host/Client Integration and Demos
-
-Contract CLI/JSON-RPC/gRPC Endpoints:
-
-    CLI for deploy, call, query contract state.
-
-    JSON-RPC or gRPC endpoint for contract calls (optionally REST if needed for web).
-
-    Integration Tests:
-
-        Deploy and call test contracts: storage, arithmetic, signature, and rollup demo.
-
-        End-to-end test with Ghostplane, Ghostbridge, and cns stack.
-
-6. Monitoring, Telemetry, and Ops
-
-Prometheus Metrics Export:
-
-    Add per-connection, per-contract, and per-node metrics (latency, errors, throughput).
-
-    Expose as /metrics endpoint or gRPC stream.
-
-    Logging and Error Handling:
-
-        Structured logs for contract execution, networking, and security events.
-
-7. Documentation and Examples
-
-Update READMEs:
-
-    Show how to deploy and call WASM/ZVM contracts in your Zig-native stack.
-
-    Provide real Zig contract example (with crypto and state).
-
-    Architecture Diagram:
-
-        Update to reflect no Rust runtime dependency; clarify ZVM/zcrypto/zquic are canonical.
-
-Optional:
-
-WASM Interop for 3rd party (Rust/AssemblyScript) contracts (if ever needed)
-
-Formal Verification hooks for critical contract logic (phase 2+)
-
-ZK/Threshold/Cross-chain upgrades (future phase)
+I’d do zvm in Rust or Zig; but if you want fast progress & libs: Rust core + Zig bindings is a really nice compromise.

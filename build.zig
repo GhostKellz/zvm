@@ -1,4 +1,3 @@
-//! Use `zig init --strip` next time to generate a project without comments.
 const std = @import("std");
 
 // Although this function looks imperative, it does not perform the build
@@ -17,54 +16,10 @@ pub fn build(b: *std.Build) void {
     // between Debug, ReleaseSafe, ReleaseFast, and ReleaseSmall. Here we do not
     // set a preferred release mode, allowing the user to decide how to optimize.
     const optimize = b.standardOptimizeOption(.{});
-    // Feature flags for optional dependencies
-    const enable_crypto = b.option(bool, "crypto", "Enable cryptographic operations (default: true)") orelse true;
-    const enable_networking = b.option(bool, "networking", "Enable networking features (default: true)") orelse true;
-    const enable_wallet = b.option(bool, "wallet", "Enable wallet integration (default: true)") orelse true;
-    const enable_enterprise = b.option(bool, "enterprise", "Enable enterprise features (shroud, zqlite) (default: false)") orelse false;
-    const enable_persistent = b.option(bool, "persistent", "Enable persistent storage (zqlite) (default: false)") orelse false;
-    
-    // Core dependencies (always enabled)
-    const zcrypto = if (enable_crypto) b.dependency("zcrypto", .{
-        .target = target,
-        .optimize = optimize,
-    }) else null;
-    
-    const zsig = if (enable_crypto) b.dependency("zsig", .{
-        .target = target,
-        .optimize = optimize,
-    }) else null;
-    
-    const zquic = if (enable_networking) b.dependency("zquic", .{
-        .target = target,
-        .optimize = optimize,
-    }) else null;
-    
-    const zsync = if (enable_networking) b.dependency("zsync", .{
-        .target = target,
-        .optimize = optimize,
-    }) else null;
-    
-    const zwallet = if (enable_wallet) b.dependency("zwallet", .{
-        .target = target,
-        .optimize = optimize,
-    }) else null;
-    
-    const zns = if (enable_wallet) b.dependency("zns", .{
-        .target = target,
-        .optimize = optimize,
-    }) else null;
-    
-    // Optional enterprise dependencies
-    const shroud = if (enable_enterprise) b.dependency("shroud", .{
-        .target = target,
-        .optimize = optimize,
-    }) else null;
-    
-    const zqlite = if (enable_persistent) b.dependency("zqlite", .{
-        .target = target,
-        .optimize = optimize,
-    }) else null;
+    // It's also possible to define more custom flags to toggle optional features
+    // of this build script using `b.option()`. All defined flags (including
+    // target and optimize options) will be listed when running `zig build --help`
+    // in this directory.
 
     // This creates a module, which represents a collection of source files alongside
     // some compilation options, such as optimization mode and linked system libraries.
@@ -86,20 +41,10 @@ pub fn build(b: *std.Build) void {
         .target = target,
     });
 
-    // Add dependencies to the module conditionally
-    if (zcrypto) |dep| mod.addImport("zcrypto", dep.module("zcrypto"));
-    if (zsig) |dep| mod.addImport("zsig", dep.module("zsig"));
-    if (zquic) |dep| mod.addImport("zquic", dep.module("zquic"));
-    if (zsync) |dep| mod.addImport("zsync", dep.module("zsync"));
-    if (zwallet) |dep| mod.addImport("zwallet", dep.module("zwallet"));
-    if (zns) |dep| mod.addImport("zns", dep.module("zns"));
-    if (shroud) |dep| mod.addImport("shroud", dep.module("shroud"));
-    if (zqlite) |dep| mod.addImport("zqlite", dep.module("zqlite"));
-
     // Here we define an executable. An executable needs to have a root module
     // which needs to expose a `main` function. While we could add a main function
     // to the module defined above, it's sometimes preferable to split business
-    // business logic and the CLI into two separate modules.
+    // logic and the CLI into two separate modules.
     //
     // If your goal is to create a Zig library for others to use, consider if
     // it might benefit from also exposing a CLI tool. A parser library for a
@@ -127,21 +72,13 @@ pub fn build(b: *std.Build) void {
             .optimize = optimize,
             // List of modules available for import in source files part of the
             // root module.
-            .imports = blk: {
-                var imports = std.ArrayList(std.Build.Module.Import).init(b.allocator);
-                imports.append(.{ .name = "zvm", .module = mod }) catch @panic("OOM");
-                
-                // Add conditional imports
-                if (zcrypto) |dep| imports.append(.{ .name = "zcrypto", .module = dep.module("zcrypto") }) catch @panic("OOM");
-                if (zsig) |dep| imports.append(.{ .name = "zsig", .module = dep.module("zsig") }) catch @panic("OOM");
-                if (zquic) |dep| imports.append(.{ .name = "zquic", .module = dep.module("zquic") }) catch @panic("OOM");
-                if (zsync) |dep| imports.append(.{ .name = "zsync", .module = dep.module("zsync") }) catch @panic("OOM");
-                if (zwallet) |dep| imports.append(.{ .name = "zwallet", .module = dep.module("zwallet") }) catch @panic("OOM");
-                if (zns) |dep| imports.append(.{ .name = "zns", .module = dep.module("zns") }) catch @panic("OOM");
-                if (shroud) |dep| imports.append(.{ .name = "shroud", .module = dep.module("shroud") }) catch @panic("OOM");
-                if (zqlite) |dep| imports.append(.{ .name = "zqlite", .module = dep.module("zqlite") }) catch @panic("OOM");
-                
-                break :blk imports.toOwnedSlice() catch @panic("OOM");
+            .imports = &.{
+                // Here "zvm" is the name you will use in your source code to
+                // import this module (e.g. `@import("zvm")`). The name is
+                // repeated because you are allowed to rename your imports, which
+                // can be extremely useful in case of collisions (which can happen
+                // importing modules from different packages).
+                .{ .name = "zvm", .module = mod },
             },
         }),
     });
@@ -151,62 +88,6 @@ pub fn build(b: *std.Build) void {
     // step). By default the install prefix is `zig-out/` but can be overridden
     // by passing `--prefix` or `-p`.
     b.installArtifact(exe);
-
-    // CLI demo executable
-    const cli_demo = b.addExecutable(.{
-        .name = "cli_demo",
-        .root_module = b.createModule(.{
-            .root_source_file = b.path("examples/cli_demo.zig"),
-            .target = target,
-            .optimize = optimize,
-            .imports = &[_]std.Build.Module.Import{
-                .{ .name = "zvm", .module = mod },
-            },
-        }),
-    });
-    b.installArtifact(cli_demo);
-
-    // Enhanced contract demo executable
-    const enhanced_demo = b.addExecutable(.{
-        .name = "enhanced_demo",
-        .root_module = b.createModule(.{
-            .root_source_file = b.path("examples/enhanced_contract_demo.zig"),
-            .target = target,
-            .optimize = optimize,
-            .imports = &[_]std.Build.Module.Import{
-                .{ .name = "zvm", .module = mod },
-            },
-        }),
-    });
-    b.installArtifact(enhanced_demo);
-
-    // Post-quantum demo executable
-    const pq_demo = b.addExecutable(.{
-        .name = "pq_demo",
-        .root_module = b.createModule(.{
-            .root_source_file = b.path("examples/post_quantum_demo.zig"),
-            .target = target,
-            .optimize = optimize,
-            .imports = &[_]std.Build.Module.Import{
-                .{ .name = "zvm", .module = mod },
-            },
-        }),
-    });
-    b.installArtifact(pq_demo);
-
-    // Networking demo executable
-    const network_demo = b.addExecutable(.{
-        .name = "network_demo",
-        .root_module = b.createModule(.{
-            .root_source_file = b.path("examples/networking_demo.zig"),
-            .target = target,
-            .optimize = optimize,
-            .imports = &[_]std.Build.Module.Import{
-                .{ .name = "zvm", .module = mod },
-            },
-        }),
-    });
-    b.installArtifact(network_demo);
 
     // This creates a top level step. Top level steps have a name and can be
     // invoked by name when running `zig build` (e.g. `zig build run`).
@@ -223,23 +104,6 @@ pub fn build(b: *std.Build) void {
     // the user runs `zig build run`, so we create a dependency link.
     const run_cmd = b.addRunArtifact(exe);
     run_step.dependOn(&run_cmd.step);
-
-    // Demo run steps
-    const run_cli_step = b.step("run-cli", "Run CLI demo");
-    const run_cli_cmd = b.addRunArtifact(cli_demo);
-    run_cli_step.dependOn(&run_cli_cmd.step);
-
-    const run_enhanced_step = b.step("run-enhanced", "Run enhanced contract demo");
-    const run_enhanced_cmd = b.addRunArtifact(enhanced_demo);
-    run_enhanced_step.dependOn(&run_enhanced_cmd.step);
-
-    const run_pq_step = b.step("run-pq", "Run post-quantum demo");
-    const run_pq_cmd = b.addRunArtifact(pq_demo);
-    run_pq_step.dependOn(&run_pq_cmd.step);
-
-    const run_network_step = b.step("run-network", "Run networking demo");
-    const run_network_cmd = b.addRunArtifact(network_demo);
-    run_network_step.dependOn(&run_network_cmd.step);
 
     // By making the run step depend on the default step, it will be run from the
     // installation directory rather than directly from within the cache directory.
@@ -277,6 +141,44 @@ pub fn build(b: *std.Build) void {
     const test_step = b.step("test", "Run tests");
     test_step.dependOn(&run_mod_tests.step);
     test_step.dependOn(&run_exe_tests.step);
+
+    // Storage counter example
+    const storage_example = b.addExecutable(.{
+        .name = "storage_counter",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("examples/storage_counter.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "zvm", .module = mod },
+            },
+        }),
+    });
+    b.installArtifact(storage_example);
+
+    const run_storage_example = b.step("example-storage", "Run storage counter example");
+    const storage_cmd = b.addRunArtifact(storage_example);
+    storage_cmd.step.dependOn(b.getInstallStep());
+    run_storage_example.dependOn(&storage_cmd.step);
+
+    // Hedera HTS/HCS example
+    const hedera_example = b.addExecutable(.{
+        .name = "hedera_token",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("examples/hedera_token.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "zvm", .module = mod },
+            },
+        }),
+    });
+    b.installArtifact(hedera_example);
+
+    const run_hedera_example = b.step("example-hedera", "Run Hedera HTS/HCS example");
+    const hedera_cmd = b.addRunArtifact(hedera_example);
+    hedera_cmd.step.dependOn(b.getInstallStep());
+    run_hedera_example.dependOn(&hedera_cmd.step);
 
     // Just like flags, top level steps are also listed in the `--help` menu.
     //

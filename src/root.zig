@@ -1,87 +1,55 @@
-//! ZVM - Zig Virtual Machine v0.2.2
-//! Root module that exports all ZVM functionality
+//! ZVM - The Zig Virtual Machine
+//! A zero-dependency, multi-chain smart contract execution engine
+//!
+//! Features:
+//! - Pure Zig implementation with zero external dependencies
+//! - Multi-chain support (Hedera, EVM, Soroban)
+//! - KALIX-native compilation target
+//! - Deterministic execution with gas metering
+//! - Post-quantum crypto support
 
 const std = @import("std");
 
-// Core ZVM modules
-pub const zvm = @import("zvm.zig");
-pub const contract = @import("contract.zig");
-pub const database = @import("database.zig");
-pub const runtime = @import("runtime.zig");
-
-// Networking and communication
-pub const networking = @import("networking.zig");
-
-// CLI and RPC interfaces
-pub const cli = @import("cli.zig");
-pub const rpc = @import("rpc.zig");
-pub const client = @import("client.zig");
-
-// Re-export commonly used types
-pub const Address = contract.Address;
-pub const ExecutionResult = contract.ExecutionResult;
-pub const ContractContext = contract.ContractContext;
-pub const Storage = contract.Storage;
-
-pub const VM = zvm.VM;
-pub const Opcode = zvm.Opcode;
-
-pub const DatabaseConfig = database.DatabaseConfig;
-pub const PersistentStorage = database.PersistentStorage;
-
-pub const EnhancedRuntimeVM = runtime.EnhancedRuntimeVM;
-pub const EnhancedRuntimeHooks = runtime.EnhancedRuntimeHooks;
-pub const Crypto = runtime.Crypto;
-
-pub const ContractClient = networking.ContractClient;
-pub const ContractServer = networking.ContractServer;
-pub const NetworkConfig = networking.NetworkConfig;
-
-pub const ZvmCli = cli.ZvmCli;
-pub const CliConfig = cli.CliConfig;
-
-pub const RpcServer = rpc.RpcServer;
-pub const RpcConfig = rpc.RpcConfig;
-pub const JsonRpc = rpc.JsonRpc;
-
-pub const ZvmClient = client.ZvmClient;
-pub const ClientConfig = client.ClientConfig;
-pub const ContractBuilder = client.ContractBuilder;
-
-// Version information
-pub const version = "0.2.2";
-pub const features = [_][]const u8{
-    "WASM Runtime Integration",
-    "Post-Quantum Cryptography (ML-DSA, ML-KEM)",
-    "zqlite Persistent Storage",
-    "QUIC/HTTP3 Networking",
-    "CLI Interface",
-    "JSON-RPC API",
-    "REST API",
-    "Client SDK",
+// Re-export core modules
+pub const types = @import("primitives/types.zig");
+pub const bytecode = @import("bytecode/opcode.zig");
+pub const interpreter = struct {
+    pub const VM = @import("interpreter/vm.zig").VM;
+    pub const Stack = @import("interpreter/stack.zig").Stack;
+    pub const Memory = @import("interpreter/memory.zig").Memory;
+    pub const ExecutionContext = @import("interpreter/vm.zig").ExecutionContext;
+    pub const ExecutionResult = @import("interpreter/vm.zig").ExecutionResult;
+};
+pub const gas = @import("gas/meter.zig");
+pub const state = struct {
+    pub const Storage = @import("state/storage.zig").Storage;
+    pub const TransientStorage = @import("state/storage.zig").TransientStorage;
+    pub const JournaledState = @import("state/journaled.zig").JournaledState;
+    pub const TransientStorageImpl = @import("state/transient.zig").TransientStorageImpl;
+    pub const StorageAccess = @import("state/storage.zig").StorageAccess;
+};
+pub const hedera = struct {
+    pub const syscalls = @import("chains/hedera/syscalls.zig");
+    pub const mock = @import("chains/hedera/mock.zig");
+    pub const HederaSyscalls = syscalls.HederaSyscalls;
+    pub const HTSOperation = syscalls.HTSOperation;
+    pub const HCSOperation = syscalls.HCSOperation;
+    pub const HederaGas = syscalls.HederaGas;
+    pub const MockHedera = mock.MockHedera;
 };
 
-// Legacy function for compatibility
-pub fn advancedPrint() !void {
-    const stdout_file = std.io.getStdOut().writer();
-    var bw = std.io.bufferedWriter(stdout_file);
-    const stdout = bw.writer();
-
-    try stdout.print("ZVM - The Zig Virtual Machine v{s}\n", .{version});
-    try stdout.print("Features: {s}\n", .{features});
-    try stdout.print("Run `zig build test` to run the tests.\n", .{});
-
-    try bw.flush();
-}
+// Re-export common types for convenience
+pub const U256 = types.U256;
+pub const Address = types.Address;
+pub const Hash = types.Hash;
+pub const Opcode = bytecode.Opcode;
+pub const VM = interpreter.VM;
+pub const Gas = gas.Gas;
+pub const Storage = state.Storage;
+pub const TransientStorage = state.TransientStorage;
+pub const JournaledState = state.JournaledState;
+pub const TransientStorageImpl = state.TransientStorageImpl;
 
 test {
-    // Import all modules to ensure they compile
-    _ = zvm;
-    _ = contract;
-    _ = database;
-    _ = runtime;
-    _ = networking;
-    _ = cli;
-    _ = rpc;
-    _ = client;
+    std.testing.refAllDecls(@This());
 }
